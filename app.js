@@ -8,6 +8,7 @@ const app = document.querySelector('#app');
 let lang = 'tr';
 try { lang = localStorage.getItem('dss-lang') === 'en' ? 'en' : 'tr'; } catch { /* Language can remain in memory. */ }
 let sb, chart, revision = 0, routeCleanup = () => {};
+const submittedSessions = new Set();
 const tr = (a, b) => lang === 'tr' ? a : b;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[c]);
 const name = item => item[`name_${lang}`] || item.name_tr || item.name_en;
@@ -15,7 +16,7 @@ const title = item => item[`title_${lang}`] || item.title_tr || item.title_en;
 const description = item => item[`description_${lang}`] || '';
 const link = (page, slug) => `#${page}${slug ? `?s=${encodeURIComponent(slug)}` : ''}`;
 const errors = {
-  PGRST202: ['Yeni özellikler için migrations/002_presenter_tools.sql dosyasını Supabase SQL Editor içinde çalıştırın.', 'Run migrations/002_presenter_tools.sql in the Supabase SQL Editor to enable these new features.'],
+  PGRST202: ['Bu özellik henüz hazır değil. Lütfen oturum yöneticisine haber verin.', 'This feature is not ready yet. Please contact the session organizer.'],
   DSS_FORBIDDEN: ['Bu alan yalnızca yetkili yönetici içindir.', 'This area requires an allowlisted administrator.'],
   DSS_NOT_FOUND: ['Oturum veya kayıt bulunamadı; silinmiş olabilir.', 'The session or record was not found; it may have been deleted.'],
   DSS_CLOSED: ['Oylama kapalı. Yanıtınız kaydedilmedi.', 'Voting is closed. Your response was not saved.'],
@@ -55,7 +56,11 @@ function routeInfo() {
 }
 function layout(content) {
   document.documentElement.lang = lang;
-  app.innerHTML = `<div class="shell"><header class="top"><div class="brand">Delivery Success Sliders</div><nav class="nav"><a class="btn" href="#home">${tr('Ana Sayfa', 'Home')}</a><a class="btn" href="#admin">${tr('Yönetim', 'Admin')}</a><button class="btn" id="lang">${lang === 'tr' ? 'EN' : 'TR'}</button></nav></header><main><div class="error" role="alert" data-error hidden></div>${content}</main></div>`;
+  const participant = !['admin', 'manage', 'results'].includes(routeInfo().page);
+  const languageButton = `<button class="btn" id="lang" aria-label="${tr('Switch to English', 'Türkçeye geç')}">${lang === 'tr' ? 'EN' : 'TR'}</button>`;
+  const participantHeader = `<header class="participant-header">${languageButton}</header>`;
+  const adminHeader = `<header class="top"><div class="brand">Delivery Success Sliders</div><nav class="nav"><a class="btn" href="#home">${tr('Ana Sayfa', 'Home')}</a><a class="btn" href="#admin">${tr('Yönetim', 'Admin')}</a><button class="btn" id="lang">${lang === 'tr' ? 'EN' : 'TR'}</button></nav></header>`;
+  app.innerHTML = `<div class="shell ${participant ? 'participant-shell' : ''}">${participant ? participantHeader : adminHeader}<main><div class="error" role="alert" data-error hidden></div>${content}</main></div>`;
   document.querySelector('#lang').onclick = () => {
     lang = lang === 'tr' ? 'en' : 'tr';
     try { localStorage.setItem('dss-lang', lang); } catch { /* Optional preference. */ }
@@ -105,11 +110,11 @@ const fields = (prefix, names = false) => `<div class="grid2">
   <label>Description EN<textarea name="description_en"></textarea></label></div>`;
 const formData = form => Object.fromEntries(new FormData(form));
 
-async function home(current) {
-  const sessions = await checked(sb.from('sessions').select('*').eq('is_open', true).order('created_at', { ascending: false }));
-  if (!current()) return;
-  const root = layout(`<section class="hero"><h1>${tr('Başarılı teslimatı nasıl tanımlıyoruz?', 'How do we define successful delivery?')}</h1><p class="muted">${tr('100 puanı başarı boyutları arasında dağıtın.', 'Allocate 100 points across success dimensions.')}</p></section><form class="card stack"><label>${tr('Aktif oturum', 'Active session')}<select name="session" required><option value="">${tr('Oturum seçin', 'Choose session')}</option>${sessions.map(s => `<option value="${esc(s.slug)}">${esc(title(s))}</option>`).join('')}</select></label>${!sessions.length ? `<p>${tr('Henüz açık oturum yok.', 'No sessions are open yet.')}</p>` : ''}<button class="btn primary" type="submit">${tr('Oylamaya Katıl', 'Join Voting')}</button></form>`);
-  root.querySelector('form').onsubmit = e => { e.preventDefault(); location.hash = link('vote', formData(e.target).session); };
+async function home() {
+  layout(`<section class="card participant-message"><h1>${tr('Oturuma katılın', 'Join your session')}</h1><p>${tr('Oy vermek için sunucunun paylaştığı QR kodunu tarayın veya katılımcı bağlantısını açın.', 'Scan the presenter’s QR code or open your participant link to vote.')}</p></section>`);
+}
+function submitted() {
+  layout(`<section class="card participant-message"><div class="submitted-mark" aria-hidden="true">✓</div><h2>${tr('Teşekkürler', 'Thank you')}</h2><p>${tr('Cevabınız kaydedildi. Bu sayfayı kapatabilirsiniz.', 'Your response has been recorded. You can close this page.')}</p></section>`);
 }
 function deviceToken() {
   try {
@@ -123,19 +128,22 @@ function deviceToken() {
   } catch { throw Error('DSS_DEVICE'); }
 }
 async function vote(slug, current) {
-  const { session, groups, dimensions } = await sessionData(slug);
+  if (submittedSessions.has(slug)) { if (current()) submitted(); return; }
+  if (!slug) throw Error('DSS_NOT_FOUND');
+  const { session, groups, dimensions } = await checked(sb.rpc('voting_session', { p_slug: slug }));
   if (!current()) return;
   if (!session.is_open) throw Error('DSS_CLOSED');
   if (groups.length < 1 || dimensions.length < 2) throw Error('DSS_CONFIG');
   const ids = dimensions.map(d => d.id), values = initialAllocation(ids);
   const token = deviceToken();
-  const root = layout(`<div class="stack voting-page"><section class="card vote-intro"><span class="eyebrow">${tr('SİZİN BAKIŞ AÇINIZ', 'YOUR PERSPECTIVE')}</span><h1>${esc(title(session))}</h1><p class="muted">${esc(description(session))}</p><fieldset><legend><span class="step-number">1</span> ${tr('Grubunuzu seçin', 'Choose your group')}</legend><div class="group-choices">${groups.map(g => `<label class="choice"><input type="radio" name="group" value="${g.id}"><span><b>${esc(name(g))}</b><span class="muted block">${esc(description(g))}</span></span></label>`).join('')}</div></fieldset></section><section class="card allocation-card"><h2><span class="step-number">2</span> ${tr('100 puanı dağıtın', 'Allocate 100 points')}</h2><p class="muted">${tr('Her boyutu bağımsız ayarlayın. Bir boyutu kalan puanlarla tamamlamak için düğmesini kullanın.', 'Adjust each dimension independently. Use its button to fill the remaining points.')}</p><div class="stack">${dimensions.map(d => `<div class="slider"><div><label for="r-${d.id}"><b>${esc(name(d))}</b></label><div class="muted">${esc(description(d))}</div></div><input id="r-${d.id}" type="range" min="0" max="100" step="1" value="${values[d.id]}" data-range="${d.id}" aria-label="${esc(name(d))}"><input type="number" inputmode="numeric" min="0" max="100" step="1" value="${values[d.id]}" data-number="${d.id}" aria-label="${esc(name(d))} ${tr('puan', 'points')}"><div class="balance-control"><button class="btn" data-balance="${d.id}" aria-describedby="hint-${d.id}">${tr('Kalan Puanı Kullan', 'Use remaining points')}</button><small class="muted block" id="hint-${d.id}" data-balance-hint="${d.id}"></small></div></div>`).join('')}</div></section><div class="vote-dock"><div><div class="total">${tr('Toplam', 'Total')}: <output id="total">100</output><span class="muted">/100</span></div><p id="budget-status" role="status" aria-live="polite"></p></div><button class="btn primary" id="send">${tr('Oyumu Gönder', 'Submit Vote')} →</button></div></div>`);
+  const root = layout(`<div class="stack voting-page"><section class="card vote-intro"><h1>${esc(title(session))}</h1><p class="muted">${esc(description(session))}</p><fieldset><legend><span class="step-number">1</span> ${tr('Grubunuzu seçin', 'Choose your group')}</legend><div class="group-choices">${groups.map(g => `<label class="choice"><input type="radio" name="group" value="${g.id}"><span><b>${esc(name(g))}</b><span class="muted block">${esc(description(g))}</span></span></label>`).join('')}</div></fieldset></section><section class="card allocation-card"><h2><span class="step-number">2</span> ${tr('100 puanı dağıtın', 'Allocate 100 points')}</h2><p class="muted">${tr('Her boyutu bağımsız ayarlayın. Bir boyutu kalan puanlarla tamamlamak için düğmesini kullanın.', 'Adjust each dimension independently. Use its button to fill the remaining points.')}</p><div class="stack">${dimensions.map(d => `<div class="slider"><div><label for="r-${d.id}"><b>${esc(name(d))}</b></label><div class="muted">${esc(description(d))}</div></div><input id="r-${d.id}" type="range" min="0" max="100" step="1" value="${values[d.id]}" data-range="${d.id}" aria-label="${esc(name(d))}"><input type="number" inputmode="numeric" min="0" max="100" step="1" value="${values[d.id]}" data-number="${d.id}" aria-label="${esc(name(d))} ${tr('puan', 'points')}"><div class="balance-control"><button class="btn" data-balance="${d.id}" aria-describedby="hint-${d.id}">${tr('Kalan Puanı Kullan', 'Use remaining points')}</button><small class="muted block" id="hint-${d.id}" data-balance-hint="${d.id}"></small></div></div>`).join('')}</div></section><div class="vote-dock"><div><div class="total">${tr('Toplam', 'Total')}: <output id="total">100</output><span class="muted">/100</span></div><p id="budget-status" role="status" aria-live="polite"></p></div><button class="btn primary" id="send">${tr('Oyumu Gönder', 'Submit Vote')} →</button></div></div>`);
   const sync = () => {
     root.querySelectorAll('[data-range]').forEach(input => { input.value = values[input.dataset.range]; });
     root.querySelectorAll('[data-number]').forEach(input => { input.value = values[input.dataset.number]; });
     const total = Object.values(values).reduce((a, b) => a + b, 0);
     root.querySelector('#total').textContent = total;
     root.querySelector('.total').classList.toggle('over-budget', total > 100);
+    root.querySelector('.vote-dock').classList.toggle('budget-complete', total === 100);
     root.querySelector('#budget-status').textContent = total === 100 ? (root.querySelector('[name=group]:checked') ? tr('Göndermeye hazır.', 'Ready to submit.') : tr('Göndermek için bir grup seçin.', 'Choose a group to submit.')) : total < 100 ? tr(`${100 - total} puan kaldı.`, `${100 - total} points remaining.`) : tr(`${total - 100} puan azaltın.`, `Remove ${total - 100} points.`);
     root.querySelector('#send').disabled = !validAllocation(values, ids) || root.querySelector('#send').dataset.pending === 'true';
     root.querySelectorAll('[data-balance]').forEach(button => {
@@ -162,7 +170,8 @@ async function vote(slug, current) {
     sync();
     if (!validAllocation(values, ids)) throw Error('DSS_TOTAL');
     await checked(sb.rpc('submit_vote', { p_session_id: session.id, p_group_id: group, p_answers: { ...values }, p_device_token: token }));
-    if (root.isConnected) layout(`<section class="card"><h2>${tr('Teşekkürler', 'Thank you')}</h2><p>${tr('Cevabınız kaydedildi.', 'Your response has been recorded.')}</p></section>`);
+    submittedSessions.add(slug);
+    if (root.isConnected) submitted();
   });
 }
 function login(current) {
@@ -188,7 +197,7 @@ function sharingPanel(slug, opened) {
   const url = new URL(location.href);
   url.search = ''; url.hash = link('vote', slug);
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  return `<section class="card stack"><h2>${tr('Katılımcıları Davet Et', 'Invite Participants')}</h2><p>${tr('Katılımcılar giriş yapmadan oy verebilir.', 'Participants can vote without signing in.')}</p>${!opened ? `<p>${tr('Oylama kapalı. Katılımcılar oy verebilmek için açılmasını beklemelidir.', 'Voting is closed. Open it before participants can submit.')}</p>` : ''}<label>${tr('Katılımcı bağlantısı', 'Participant link')}<input id="participant-link" readonly value="${esc(url.href)}"></label><div class="nav"><button class="btn" id="copy-link">${tr('Bağlantıyı Kopyala', 'Copy link')}</button><a class="btn" href="${esc(url.href)}" target="_blank" rel="noopener">${tr('Oylamayı Aç', 'Open voting page')}</a></div><p id="copy-status" role="status"></p>${local ? `<p class="share-warning">${tr('Bu bağlantı yalnızca bu bilgisayarda çalışır. Telefondan QR ile katılım için erişilebilir bir HTTPS site adresi gerekir.', 'This link works only on this computer. Joining by phone requires a reachable HTTPS site address.')}</p>` : ''}<div id="participant-qr" class="qr" role="img" aria-label="${tr('Oylama bağlantısı QR kodu', 'Voting link QR code')}"></div></section>`;
+  return `<section class="card stack participant-sharing"><h2>${tr('Katılımcı QR Kodu', 'Participant QR Code')}</h2><p>${tr('Katılımcılar giriş yapmadan oy verebilir.', 'Participants can vote without signing in.')}</p>${!opened ? `<p>${tr('Oylama kapalı. Katılımcılar oy verebilmek için açılmasını beklemelidir.', 'Voting is closed. Open it before participants can submit.')}</p>` : ''}<div id="participant-qr" class="qr" role="img" aria-label="${tr('Oylama bağlantısı QR kodu', 'Voting link QR code')}"></div><label>${tr('Katılımcı bağlantısı', 'Participant link')}<input id="participant-link" readonly value="${esc(url.href)}"></label><div class="nav"><button class="btn" id="copy-link">${tr('Bağlantıyı Kopyala', 'Copy link')}</button><a class="btn" href="${esc(url.href)}" target="_blank" rel="noopener">${tr('Oylamayı Aç', 'Open voting page')}</a></div><p id="copy-status" role="status"></p>${local ? `<p class="share-warning">${tr('Bu bağlantı yalnızca bu bilgisayarda çalışır. Telefondan QR ile katılım için erişilebilir bir HTTPS site adresi gerekir.', 'This link works only on this computer. Joining by phone requires a reachable HTTPS site address.')}</p>` : ''}</section>`;
 }
 function setupSharing(root) {
   const input = root.querySelector('#participant-link');
@@ -247,6 +256,7 @@ async function manage(slug, current) {
   }));
 }
 async function results(slug, current) {
+  if (!await requireAdmin()) { if (current()) login(current); return; }
   let snapshot = await sessionData(slug, true);
   if (!current()) return;
   if (!window.echarts) throw Error('DSS_DEPENDENCY');
@@ -294,6 +304,7 @@ async function results(slug, current) {
     apply: fresh => { if (current()) { snapshot = fresh; draw(); } },
     status: (state, error) => {
       if (!current()) return;
+      if (error && (['42501', 'PGRST301', 'PGRST302'].includes(error.code) || /DSS_FORBIDDEN|DSS_NOT_FOUND/.test(error.message || ''))) { void route(); return; }
       const messages = { live: tr('Canlı', 'Live'), frozen: tr('Donduruldu', 'Frozen'), syncing: tr('Güncelleniyor…', 'Updating…'), error: tr('Bağlantı kesildi · tekrar deneniyor', 'Disconnected · retrying') };
       root.querySelector('#live-status').textContent = error?.message?.includes('DSS_NOT_FOUND') ? tr('Oturum silindi', 'Session deleted') : messages[state];
       root.querySelector('#live-status').dataset.state = state;
@@ -368,7 +379,7 @@ async function route() {
     else throw Error('DSS_NOT_FOUND');
   } catch (error) {
     if (!current()) return;
-    const root = layout(`<section class="card"><button class="btn" id="retry">${tr('Tekrar Dene', 'Retry')}</button>${error.message?.includes('DSS_FORBIDDEN') ? `<button class="btn" id="signout">${tr('Çıkış', 'Sign out')}</button>` : ''}</section>`);
+    const root = layout(`<section class="card"><button class="btn" id="retry">${tr('Tekrar Dene', 'Retry')}</button>${['admin', 'manage', 'results'].includes(routeInfo().page) && error.message?.includes('DSS_FORBIDDEN') ? `<button class="btn" id="signout">${tr('Çıkış', 'Sign out')}</button>` : ''}</section>`);
     showError(root, error);
     root.querySelector('#retry').onclick = route;
     if (root.querySelector('#signout')) action(root, root.querySelector('#signout'), async () => { await checked(sb.auth.signOut()); if (current()) await route(); });
@@ -378,6 +389,10 @@ try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY); } catch { /
 window.addEventListener('hashchange', route);
 window.addEventListener('resize', () => chart?.resize());
 sb?.auth.onAuthStateChange(event => {
-  if (event === 'SIGNED_OUT' && ['admin', 'manage'].includes(routeInfo().page)) setTimeout(route, 0);
+  if (event === 'SIGNED_OUT' && ['admin', 'manage', 'results'].includes(routeInfo().page)) {
+    ++revision; routeCleanup(); routeCleanup = () => {}; chart?.dispose(); chart = null;
+    layout(`<p role="status">${tr('Oturum kapatıldı.', 'Signed out.')}</p>`);
+    setTimeout(route, 0);
+  }
 });
 route();

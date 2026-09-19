@@ -2,15 +2,15 @@
 
 Small bilingual workshop application: vanilla HTML/CSS/JavaScript, Supabase and Apache ECharts. No framework, bundler, build step or server-side application. Supabase is the backend; CDN scripts provide its browser SDK and ECharts.
 
-## Second MVP iteration: upgrade from the already-migrated first MVP
+## Participant access upgrade (required for existing MVP projects)
 
-Run **the entire `migrations/002_presenter_tools.sql`** in your existing Supabase project's SQL Editor as the database owner. It adds only `duplicate_session` and `export_session`, both restricted to the authenticated allowlisted administrator. It does not alter existing RLS policies, reset responses, replace your allowlist, or change session state. It is transactional and safe to rerun. Keep a backup of data you need as usual.
+1. If not already applied, run the entire `migrations/002_presenter_tools.sql` in the Supabase SQL Editor as the database owner. This adds admin-only duplication and exports.
+2. Run the **entire `migrations/003_participant_access.sql`** in a new SQL Editor query as the database owner. This transactional, rerunnable migration preserves sessions, responses and your existing admin allowlist. It replaces configuration read policies, restricts aggregates to the allowlisted admin, and adds the minimal `voting_session` RPC.
+3. Reload application tabs after success. If an RPC is briefly unavailable, wait for the API schema cache to reload and retry. Verify the anonymous access checks below before sharing a workshop QR.
 
-Your admin allowlist entry stays valid; do not recreate it. The full `supabase.sql` also includes these functions for fresh installs. If your first MVP migration is already applied, use the smaller `002` script instead of rerunning the full schema. Reload the browser after applying the migration. Until then, duplication/export buttons show a bilingual migration message; voting and the live presenter screen still work.
+Do not rerun the full schema or recreate your admin allowlist for this upgrade. Until migration 003 succeeds, the old database still permits public aggregates; frontend changes alone do not secure them. The new voting page requires its new RPC. Coordinate this upgrade before workshop use. Editing this repository does not apply hosted SQL or enable deployment.
 
-No deployment or hosted SQL changes are performed by editing this repository.
-
-## Upgrade an existing Supabase project (required)
+## Fresh installation or upgrade from the original prototype
 
 The new application **requires the updated `supabase.sql`**. Replacing only the frontend will not work. The SQL supports a fresh project and the original MVP schema, and can be rerun. Apply it using the Supabase SQL Editor as the project database owner, not from the browser.
 
@@ -53,13 +53,14 @@ These instructions do not enable GitHub Pages or modify the hosted project autom
 - `is_admin()`: checks the signed-in UID against that allowlist.
 - `admin_action(...)`: administrator-only mutations. Direct INSERT/UPDATE/DELETE access is revoked from both API roles; RLS remains enabled.
 - `submit_vote(...)`: anonymous or signed-in voting with server-side validation and uniqueness. Locks the session row before checking state and writing.
-- `session_results(...)`: public aggregate response counts and group/dimension averages. It returns no raw responses, response IDs, timestamps, or device tokens. Groups without votes have no average and show no bar.
+- `voting_session(p_slug)`: minimal bilingual session/group/dimension content for a known, open session only. It exposes no counts, responses, device tokens or session list.
+- `session_results(...)`: allowlisted-admin-only aggregate response counts and group/dimension averages. It returns no raw responses, response IDs, timestamps, or device tokens. Groups without votes have no average and show no bar.
 
-Session metadata, groups and dimensions are public. Raw responses are unreadable to anonymous users and hidden by RLS from authenticated non-admins. Only the allowlisted admin may read them; the UI itself uses the aggregate RPC. Database-owner SQL access remains privileged for maintenance. RPCs use a fixed empty search path and explicit execute grants, following [Supabase function guidance](https://supabase.com/docs/guides/database/functions).
+Direct reads of sessions, groups, dimensions and raw responses are restricted to the allowlisted admin. Anonymous users and authenticated non-admins can only retrieve the minimal voting configuration through `voting_session` and submit a valid vote through `submit_vote`. They cannot enumerate sessions, query aggregates, or export responses. The results UI checks admin authentication and uses the admin-only aggregate RPC. Database-owner SQL access remains privileged for maintenance. RPCs use a fixed empty search path and explicit execute grants, following [Supabase function guidance](https://supabase.com/docs/guides/database/functions).
 
 “One vote per device” means one vote per browser profile/origin using a persistent localStorage token. The unique database index handles double clicks, retries and concurrent submissions with that token. Clearing storage, using private browsing, another profile, or deliberately supplying a different token bypasses this lightweight identity. It is not a verified-person voting system. Storage must be enabled. A database response reset permits that browser to vote again.
 
-Aggregates are public, including small groups; a one-person group's average necessarily equals that person's allocation. Blur/reveal controls are presentation tools, not access controls.
+Aggregates are available only to the admin, including small groups; a one-person group's average necessarily equals that person's allocation. Blur/reveal controls are presentation tools, not access controls.
 
 ## Local preview and checks
 
@@ -69,7 +70,7 @@ From the repository directory:
 python3 -m http.server 8000
 ```
 
-Open `http://localhost:8000/`. Use HTTP(S), not `file://`, because the client uses ES modules. Localhost and HTTPS support the browser UUID API. No install/build step is needed to run the application. Internet access is needed for CDN libraries and Supabase.
+Open `http://localhost:8000/#admin` for administration. The application root only explains how to join with a participant link. Use HTTP(S), not `file://`, because the client uses ES modules. Localhost and HTTPS support the browser UUID API. No install/build step is needed to run the application. Internet access is needed for CDN libraries and Supabase.
 
 ```sh
 node --check app.js
@@ -96,7 +97,7 @@ The database harness supplies minimal Supabase roles/auth helpers. It checks SQL
 6. After the first vote, configuration controls must be locked even after closing voting. Direct configuration RPC calls must fail too. Votes after close must fail.
 7. Confirm “Delete All Responses.” This also closes voting. Configuration should unlock; after reopening, the original browser can vote again.
 8. Confirm deletion of a disposable session. Its groups, dimensions and responses must disappear; old URLs must show a useful error.
-9. Check anonymous raw-response queries and administration mutations are denied. Test malformed allocations and groups/dimensions from a different session against the RPC. None should be stored.
+9. From a separate signed-out browser, verify `#results?s=SLUG` requires login and never shows counts or a chart. Check anonymous aggregate RPC calls, direct configuration/raw-response queries and administration mutations are denied. An authenticated non-admin must also be denied results. A known open slug may return only voting configuration; closed/missing slugs must fail. Test malformed allocations and groups/dimensions from a different session against the RPC. None should be stored.
 
 ## Routes and eventual GitHub Pages deployment
 
@@ -107,7 +108,9 @@ GitHub Pages is intentionally not enabled by this change. When deployment is app
 
 ## Participant sharing and independent allocation
 
-Session management includes an anonymous participant link, Copy link, and a QR code generated in the browser with [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator/tree/master/js) 1.4.4 from jsDelivr. No QR image service receives the link. If the QR library or clipboard is unavailable, the selectable link remains usable. The link preserves the site's repository path and points directly to voting without sign-in.
+Session management includes one prominent **Participant QR Code**, the exact anonymous participant URL immediately beneath it, and Copy link. The QR is generated in the browser with [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator/tree/master/js) 1.4.4 from jsDelivr. No QR image service receives the link. If the QR library or clipboard is unavailable, the selectable link remains usable. The link preserves the site's repository path and points directly to voting without sign-in: `https://HOST/OPTIONAL-PROJECT-PATH/#vote?s=SESSION-SLUG`. Both GitHub Pages project paths and future custom domains use the current origin/path automatically.
+
+Participants see only a language toggle, session title/description, group selection with descriptions, dimensions with descriptions, allocations and the budget/submit bar. At exactly 100 points the total turns green. Successful submission replaces the form with a bilingual confirmation; there is no Results link. Loading, error and confirmation states retain this isolated layout, with no admin/home/results navigation or response counts. Management and results remain at their explicit protected hash routes; moving between them preserves the admin login.
 
 Localhost QR links only work on the hosting computer. Phone participation requires a reachable site, normally deployed over HTTPS. This update does not enable hosting or change the local server binding.
 
@@ -121,11 +124,11 @@ The x axis always represents success dimensions. Side-by-side series within each
 - Blur runs from 0–100%; 100% fully conceals the chart. At nonzero blur, tooltips are disabled so hovering cannot bypass the effect.
 - Dimension names, group identities, exact values and Y axis are independent toggles. Hidden labels become Dimension A/B/... and Group A/B/.... Hidden series use the same neutral color; their randomized per-page order is unrelated to configuration order. Aliases remain stable while that presentation is open, including when new groups or dimensions appear. Revealing group identities adds real names and colors; concealing them immediately clears old labels/tooltips. Once an audience has seen an identity or recognized a distribution, hiding labels cannot erase that knowledge.
 - **Fully Blur** changes only blur. **Fully Reveal** sets blur to zero and enables all four toggles. **Reset Reveal** restores all-hidden/100% blur without changing freeze state or existing aliases.
-- New results load automatically through the public aggregate RPC, approximately every three seconds after the preceding request completes. No raw-response subscriptions or new public read permissions are used. Connection errors show retry status and keep the last successful snapshot visible.
+- New results load automatically through the admin-only aggregate RPC, approximately every three seconds after the preceding request completes. No raw-response subscriptions or new public read permissions are used. Connection errors show retry status and keep the last successful snapshot visible.
 - **Freeze Results** pauses display updates, including count and configuration. Votes continue to be stored normally. **Unfreeze** fetches the latest snapshot immediately. In-flight responses from before a freeze cannot overwrite it. Requests/timers are cleaned up when navigating away.
 - **Presenter Mode** requests browser fullscreen and hides navigation. If fullscreen is unavailable, a full-window projection layout is used. Chart text, legends, values, bar widths, spacing, headings and controls scale with the available window width and height; resizing recomputes the chart. The plot fills the space remaining below the header. Controls collapse; click their summary to expand. The Exit Presenter button and Escape both exit. Reveal transitions respect reduced-motion preferences. See [ECharts transitions](https://echarts.apache.org/handbook/en/how-to/animation/transition/) and [browser fullscreen behavior](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen).
 
-Reveal is a presentation mechanism, not an authorization boundary. The existing public session metadata and aggregate API remain public. Raw responses remain protected by the admin allowlist/RLS.
+Reveal is a presentation mechanism, not an authorization boundary. Database grants, RLS and RPC allowlist checks protect configuration, aggregate results and raw responses. Signing out clears the results screen, including a frozen presentation.
 
 ## Duplication and exports
 

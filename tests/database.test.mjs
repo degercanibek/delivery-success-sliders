@@ -41,7 +41,7 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
   const token = 'browser-token-one-000001';
   const cast = 'select public.submit_vote($1,$2,$3,$4)';
   await t.test('allowlist is single-user and denies anonymous/non-admin mutations', async () => {
-    assert.equal((await anon('select public.is_admin() value'))[0].value, false);
+    await assert.rejects(anon('select public.is_admin()'), /permission denied/);
     assert.equal((await admin('select public.is_admin() value'))[0].value, true);
     await assert.rejects(anon("select public.admin_action('create_session')"), /permission denied/);
     await assert.rejects(as('authenticated', otherId, "select public.admin_action('create_session')"), /DSS_FORBIDDEN/);
@@ -51,14 +51,14 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
   });
   await t.test('closed setup, minimum dimensions, safe opening and direct-write denial', async () => {
     sid = await action('create_session', null, { slug: 'test-session', title_tr: 'Deneme', title_en: 'Test' });
-    assert.equal((await anon('select is_open from public.sessions where id=$1', [sid]))[0].is_open, false);
+    assert.equal((await admin('select is_open from public.sessions where id=$1', [sid]))[0].is_open, false);
     await assert.rejects(action('open', sid), /DSS_CONFIG/);
     await action('add_group', sid, { name_tr: 'Grup', name_en: 'Group' });
-    gid = (await anon('select id from public.groups where session_id=$1', [sid]))[0].id;
+    gid = (await admin('select id from public.groups where session_id=$1', [sid]))[0].id;
     await action('add_dimension', sid, { name_tr: 'A', name_en: 'A' });
     await assert.rejects(action('open', sid), /DSS_CONFIG/);
     await action('add_dimension', sid, { name_tr: 'B', name_en: 'B' });
-    dims = (await anon('select id from public.dimensions where session_id=$1 order by sort_order', [sid])).map(d => d.id);
+    dims = (await admin('select id from public.dimensions where session_id=$1 order by sort_order', [sid])).map(d => d.id);
     await action('open', sid);
     await assert.rejects(action('add_dimension', sid, { name_tr: 'C', name_en: 'C' }), /DSS_CLOSE_FIRST/);
     for (const table of ['sessions', 'groups', 'dimensions', 'responses']) {
@@ -69,10 +69,28 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
     otherSession = await action('create_session', null, { slug: 'other-session', title_tr: 'Diğer', title_en: 'Other' });
     await action('add_group', otherSession, { name_tr: 'G', name_en: 'G' });
     await action('add_dimension', otherSession, { name_tr: 'D', name_en: 'D' });
-    foreignGroup = (await anon('select id from public.groups where session_id=$1', [otherSession]))[0].id;
-    foreignDimension = (await anon('select id from public.dimensions where session_id=$1', [otherSession]))[0].id;
+    foreignGroup = (await admin('select id from public.groups where session_id=$1', [otherSession]))[0].id;
+    foreignDimension = (await admin('select id from public.dimensions where session_id=$1', [otherSession]))[0].id;
   });
   const valid = () => ({ [dims[0]]: 40, [dims[1]]: 60 });
+  await t.test('anonymous and authenticated non-admins cannot browse configuration or query results', async () => {
+    for (const table of ['sessions', 'groups', 'dimensions']) {
+      await assert.rejects(anon(`select * from public.${table}`), /permission denied/);
+      assert.equal((await as('authenticated', otherId, `select * from public.${table}`)).length, 0);
+    }
+    await assert.rejects(anon('select public.session_results($1)', [sid]), /permission denied/);
+    await assert.rejects(as('authenticated', otherId, 'select public.session_results($1)', [sid]), /DSS_FORBIDDEN/);
+    const vote = (await anon("select public.voting_session('test-session') data"))[0].data;
+    assert.deepEqual(Object.keys(vote).sort(), ['dimensions', 'groups', 'session']);
+    assert.equal(vote.session.id, sid);
+    assert.deepEqual(Object.keys(vote.session).sort(), ['description_en', 'description_tr', 'id', 'is_open', 'title_en', 'title_tr']);
+    for (const item of [...vote.groups, ...vote.dimensions]) {
+      assert.deepEqual(Object.keys(item).sort(), ['description_en', 'description_tr', 'id', 'name_en', 'name_tr']);
+    }
+    assert.ok(!JSON.stringify(vote).includes('response'));
+    await assert.rejects(anon("select public.voting_session('other-session')"), /DSS_CLOSED/);
+    await assert.rejects(anon("select public.voting_session('missing')"), /DSS_NOT_FOUND/);
+  });
   await t.test('rejects wrong totals, bounds, types, keys, groups and tokens', async () => {
     for (const answers of [null, [], {}, { [dims[0]]: 99 }, { [dims[0]]: 40, [dims[1]]: 59 }, { [dims[0]]: -1, [dims[1]]: 101 }, { [dims[0]]: '40', [dims[1]]: 60 }, { [dims[0]]: null, [dims[1]]: 100 }, { ...valid(), extra: 0 }, { [dims[0]]: 40, [foreignDimension]: 60 }]) {
       await assert.rejects(anon(cast, [sid, gid, answers, token]), /DSS_(ANSWERS|TOTAL)/);
@@ -89,7 +107,7 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
     await assert.rejects(anon('select * from public.responses'), /permission denied/);
     assert.equal((await as('authenticated', otherId, 'select * from public.responses')).length, 0);
     assert.equal((await admin('select * from public.responses')).length, 2);
-    const result = (await anon('select public.session_results($1) result', [sid]))[0].result;
+    const result = (await admin('select public.session_results($1) result', [sid]))[0].result;
     assert.equal(result.response_count, 2);
     assert.equal(result.groups[0].response_count, 2);
     assert.ok(result.averages.every(a => a.average === 50));
@@ -137,9 +155,9 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
     }
     await action('open', sid);
     await action('delete_responses', sid);
-    assert.equal((await anon('select is_open from public.sessions where id=$1', [sid]))[0].is_open, false);
+    assert.equal((await admin('select is_open from public.sessions where id=$1', [sid]))[0].is_open, false);
     await action('add_dimension', sid, { name_tr: 'C', name_en: 'C' });
-    const added = (await anon('select id from public.dimensions where session_id=$1 and name_en=$2', [sid, 'C']))[0].id;
+    const added = (await admin('select id from public.dimensions where session_id=$1 and name_en=$2', [sid, 'C']))[0].id;
     await action('delete_dimension', sid, { id: added });
     await action('open', sid);
     await anon(cast, [sid, gid, valid(), token]); // Reset permits the same browser.
@@ -147,7 +165,7 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
   await t.test('session deletion cascades and missing sessions are guarded', async () => {
     await action('delete_session', sid);
     for (const table of ['groups', 'dimensions', 'responses']) assert.equal((await db.query(`select count(*)::int n from public.${table} where session_id=$1`, [sid])).rows[0].n, 0);
-    await assert.rejects(anon('select public.session_results($1)', [sid]), /DSS_NOT_FOUND/);
+    await assert.rejects(admin('select public.session_results($1)', [sid]), /DSS_NOT_FOUND/);
     await assert.rejects(action('close', sid), /DSS_NOT_FOUND/);
   });
   await db.close();
@@ -165,5 +183,26 @@ test('migration stops without silently deleting invalid legacy responses', async
   await db.exec('rollback');
   assert.equal((await db.query('select count(*)::int n from public.responses')).rows[0].n, 1);
   assert.equal((await db.query("select to_regnamespace('dss_private') n")).rows[0].n, null);
+  await db.close();
+});
+
+
+test('003 closes an existing public aggregate endpoint and is safe to rerun', async () => {
+  const db = new PGlite();
+  await db.exec(bootstrap);
+  await db.exec(sql.split('-- Participant access boundary')[0] + 'commit;');
+  await db.query('insert into dss_private.admin_users(user_id) values($1)', [adminId]);
+  const sid = (await db.query("insert into public.sessions(slug) values('old-session') returning id")).rows[0].id;
+  await db.exec('set role anon');
+  assert.equal((await db.query('select public.session_results($1) r', [sid])).rows[0].r.response_count, 0);
+  await db.exec('reset role');
+  const migration = await readFile(new URL('../migrations/003_participant_access.sql', import.meta.url), 'utf8');
+  await db.exec(migration); await db.exec(migration);
+  await db.exec('set role anon');
+  await assert.rejects(db.query('select public.session_results($1)', [sid]), /permission denied/);
+  await assert.rejects(db.query('select * from public.sessions'), /permission denied/);
+  await db.exec('reset role');
+  assert.equal((await db.query('select user_id from dss_private.admin_users')).rows[0].user_id, adminId);
+  assert.equal((await db.query('select count(*)::int n from public.sessions')).rows[0].n, 1);
   await db.close();
 });

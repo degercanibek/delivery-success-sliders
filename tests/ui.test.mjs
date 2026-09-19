@@ -24,10 +24,11 @@ function harness(hash, options = {}) {
     liveFeed: settings => presentation.liveFeed({ ...settings, schedule: callback => { ticks.set(++tickId, callback); return tickId; }, cancel: id => ticks.delete(id) }),
     downloadFile: (...args) => downloads.push(args)
   });
-  const calls = [], chartOptions = [];
+  const calls = [], chartOptions = [], tableReads = []; let authCallback;
   const sb = {
-    auth: { getSession: async () => ({ data: { session: options.signedIn ? {} : null }, error: null }), onAuthStateChange: () => {}, signOut: async () => ({ error: null }) },
+    auth: { getSession: async () => ({ data: { session: options.signedIn ? {} : null }, error: null }), onAuthStateChange: callback => { authCallback = callback; }, signOut: async () => ({ error: null }) },
     from(table) {
+      tableReads.push(table);
       let single = false; const filters = [];
       const query = { select: () => query, eq: (key, value) => { filters.push([key, value]); return query; }, order: () => query, maybeSingle: () => { single = true; return query; },
         then(resolve, reject) {
@@ -41,6 +42,12 @@ function harness(hash, options = {}) {
     },
     rpc: async (fn, params) => {
       calls.push({ fn, params });
+      if (fn === 'voting_session') {
+        if (options.missing || params.p_slug !== 'test') return { error: { message: 'DSS_NOT_FOUND' } };
+        if (options.closed) return { error: { message: 'DSS_CLOSED' } };
+        if (options.loadError) return { error: { message: 'network failure' } };
+        return { data: { session, groups: options.groups || groups, dimensions: options.dimensions || dimensions } };
+      }
       if (fn === 'is_admin') return { data: !!options.isAdmin };
       if (fn === 'submit_vote') return options.submit ? options.submit(params) : { data: null };
       if (fn === 'session_results') return { data: options.aggregate || { response_count: 0, groups: [], averages: [] } };
@@ -55,12 +62,12 @@ function harness(hash, options = {}) {
   window.console.error = () => {};
   window.confirm = () => false;
   window.eval(source);
-  return { dom, window, document: window.document, calls, chartOptions, downloads, ticks, tick: () => { const entry = ticks.entries().next().value; if (entry) { ticks.delete(entry[0]); return entry[1](); } } };
+  return { dom, window, document: window.document, calls, chartOptions, tableReads, authEvent: event => authCallback(event), downloads, ticks, tick: () => { const entry = ticks.entries().next().value; if (entry) { ticks.delete(entry[0]); return entry[1](); } } };
 }
 
 test('hash navigation works and management checks authentication and allowlist', async () => {
   const h = harness('#home');
-  await waitFor(() => h.document.querySelector('select'));
+  await waitFor(() => h.document.querySelector('.participant-message'));
   h.window.location.hash = '#manage?s=test';
   await waitFor(() => h.document.querySelector('[name=password]'));
   assert.equal(h.document.querySelector('#wipe'), null);
@@ -117,7 +124,8 @@ test('failed submission retains values and enables retry with the same device to
   assert.equal(h.document.querySelector('#send').disabled, false);
   h.document.querySelector('#send').click();
   await waitFor(() => h.calls.filter(c => c.fn === 'submit_vote').length === 2);
-  assert.equal(h.calls[0].params.p_device_token, h.calls[1].params.p_device_token);
+  const submissions = h.calls.filter(call => call.fn === 'submit_vote');
+  assert.equal(submissions[0].params.p_device_token, submissions[1].params.p_device_token);
   h.dom.window.close();
 });
 
@@ -136,7 +144,7 @@ test('missing sessions, load errors and too few dimensions render bilingual erro
 });
 
 test('results reveal independently, freeze display, update automatically and clean up on navigation', async () => {
-  const options = { aggregate: { response_count: 1, groups: [], averages: [] } };
+  const options = { signedIn: true, isAdmin: true, aggregate: { response_count: 1, groups: [], averages: [] } };
   const h = harness('?s=test#results', options);
   await waitFor(() => h.document.querySelector('#freeze'));
   assert.equal(h.document.querySelector('#count').textContent, '1');
@@ -178,7 +186,7 @@ test('results reveal independently, freeze display, update automatically and cle
   h.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(h.document.body.classList.contains('presenting'), false);
   h.window.location.hash = '#home';
-  await waitFor(() => h.document.querySelector('select'));
+  await waitFor(() => h.document.querySelector('.participant-message'));
   assert.equal(h.ticks.size, 0);
   assert.equal(h.document.body.classList.contains('results-view'), false);
   h.dom.window.close();
@@ -212,7 +220,7 @@ test('slug guidance and QR failure remain usable', async () => {
 
 
 test('new groups/dimensions join the current reveal state, without exposing identities', async () => {
-  const opts = { groups: [...groups], dimensions: [...dimensions] };
+  const opts = { signedIn: true, isAdmin: true, groups: [...groups], dimensions: [...dimensions] };
   const h = harness('#results?s=test', opts);
   await waitFor(() => h.document.querySelector('#freeze'));
   opts.groups.push({ id: 'new-group', session_id: session.id, name_tr: 'Gizli', name_en: 'Secret' });
@@ -239,7 +247,7 @@ test('admin exports download a complete archive, CSV and report missing migratio
   options.exportError = true;
   h.document.querySelector('#export-json').click();
   await waitFor(() => !h.document.querySelector('[data-error]').hidden);
-  assert.match(h.document.querySelector('[data-error]').textContent, /002_presenter_tools/);
+  assert.match(h.document.querySelector('[data-error]').textContent, /oturum yöneticisine/);
   h.dom.window.close();
 });
 
@@ -249,5 +257,69 @@ test('deployed HTTPS participant QR follows the current origin and subpath', asy
   await waitFor(() => h.document.querySelector('#participant-link'));
   assert.equal(encoded, 'https://workshop.example.org/repository/#vote?s=test');
   assert.equal(h.document.querySelector('.share-warning'), null);
+  h.dom.window.close();
+});
+
+
+test('participant loading, voting, confirmation and language switch never contain admin navigation or data', async () => {
+  const h = harness('#vote?s=test');
+  const isolated = () => {
+    assert.equal(h.document.querySelectorAll('a, nav').length, 0);
+    assert.equal(h.document.querySelector('#count, #presenter, #freeze, [name=password]'), null);
+  };
+  isolated();
+  await waitFor(() => h.document.querySelector('#send'));
+  isolated();
+  assert.deepEqual(h.tableReads, []);
+  assert.deepEqual(h.calls.map(call => call.fn), ['voting_session']);
+  assert.ok(h.document.querySelector('.budget-complete'));
+  h.document.querySelector('[name=group]').checked = true;
+  h.document.querySelector('#send').click();
+  await waitFor(() => h.document.querySelector('.submitted-mark'));
+  isolated();
+  assert.equal(h.document.querySelector('#send'), null);
+  h.document.querySelector('#lang').click();
+  await waitFor(() => h.document.querySelector('.submitted-mark'));
+  assert.match(h.document.querySelector('main').textContent, /Thank you/);
+  isolated();
+  assert.ok(!h.calls.some(call => ['is_admin', 'session_results'].includes(call.fn)));
+  h.dom.window.close();
+});
+
+test('participant errors and closed/deleted sessions retain isolated layout', async () => {
+  for (const options of [{ closed: true }, { missing: true }, { loadError: true }]) {
+    const h = harness('#vote?s=test', options);
+    await waitFor(() => !h.document.querySelector('[data-error]').hidden);
+    assert.equal(h.document.querySelectorAll('a, nav').length, 0);
+    assert.equal(h.document.querySelector('#count, #presenter, [name=password]'), null);
+    assert.deepEqual(h.tableReads, []);
+    h.dom.window.close();
+  }
+});
+
+test('anonymous/non-admin result routes never fetch aggregates or render charts', async () => {
+  for (const options of [{}, { signedIn: true, isAdmin: false }]) {
+    const h = harness('#results?s=test', options);
+    await waitFor(() => h.document.querySelector('[name=password]') || !h.document.querySelector('[data-error]').hidden);
+    assert.equal(h.calls.some(c => c.fn === 'session_results'), false);
+    assert.deepEqual(h.tableReads, []);
+    assert.equal(h.document.querySelector('#chart, #count, #presenter'), null);
+    h.dom.window.close();
+  }
+});
+
+test('admin stays signed in between management and results; signout immediately clears frozen results', async () => {
+  const options = { signedIn: true, isAdmin: true };
+  const h = harness('#manage?s=test', options);
+  await waitFor(() => h.document.querySelector('#wipe'));
+  h.window.location.hash = '#results?s=test';
+  await waitFor(() => h.document.querySelector('#freeze'));
+  assert.equal(h.document.querySelector('[name=password]'), null);
+  h.document.querySelector('#freeze').click();
+  options.signedIn = false;
+  h.authEvent('SIGNED_OUT');
+  assert.equal(h.document.querySelector('#chart, #count'), null);
+  await waitFor(() => h.document.querySelector('[name=password]'));
+  assert.equal(h.ticks.size, 0);
   h.dom.window.close();
 });
