@@ -1,0 +1,33 @@
+# macOS and Windows metadata
+.DS_Store
+.AppleDouble
+._*
+Thumbs.db
+Desktop.ini
+
+# Local editors and agent configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.codex/
+.agents/
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Test dependencies and generated output (the app has no build step)
+node_modules/
+coverage/
+playwright-report/
+test-results/
+dist/
+*.log
+*.tmp
+__pycache__/
+*.py[cod]
