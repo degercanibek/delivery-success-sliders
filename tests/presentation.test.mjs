@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chartOption, identityMap, letter, liveFeed } from '../presentation.mjs';
+import { chartOption, identityMap, letter, liveFeed, groupParticipation } from '../presentation.mjs';
 const data = {
   groups: [{ id: 'lead', name_en: 'Leadership' }, { id: 'eng', name_en: 'Engineering' }, { id: 'prod', name_en: 'Product' }],
   dimensions: [{ id: 'scope', name_en: 'Scope' }, { id: 'time', name_en: 'Time' }],
@@ -76,17 +76,17 @@ test('chart typography, bar width and spacing scale with the available window', 
 });
 
 
-test('group counts use reveal aliases and update independently of exact values', () => {
-  const identities = identityMap(() => 0), aliases = new Map();
+test('participation cards use stable aliases, show zero counts and refresh without leaking identities', () => {
+  const identities = identityMap(() => 0);
   const snapshot = { ...data, results: { ...data.results, groups: [{ group_id: 'lead', response_count: 12 }] } };
-  const hidden = chartOption(snapshot, {}, identities, aliases, 'tr');
-  const series = hidden.series.find(s => s.data[0] === 40);
-  assert.equal(hidden.legend.formatter(series.name), `${series.name} · 12 oy`);
-  assert.ok(!hidden.legend.formatter(series.name).includes('Leadership'));
-  const shown = chartOption(snapshot, { groups: true }, identities, aliases, 'en');
-  assert.equal(shown.legend.formatter('Leadership'), 'Leadership · 12 votes');
-  assert.equal(shown.legend.formatter('Product'), 'Product · 0 votes');
+  const hidden = groupParticipation(snapshot, identities, false, 'tr');
+  assert.ok(hidden.every(g => g.label.startsWith('Grup ')));
+  assert.ok(!JSON.stringify(hidden).includes('Leadership'));
+  const shown = groupParticipation(snapshot, identities, true, 'en');
+  assert.equal(shown.find(g => g.label === 'Leadership').count, 12);
+  assert.equal(shown.find(g => g.label === 'Product').count, 0);
   snapshot.results.groups[0].response_count = 13;
-  const refreshed = chartOption(snapshot, {}, identities, aliases, 'tr');
-  assert.equal(refreshed.legend.formatter(series.name), `${series.name} · 13 oy`);
+  const refreshed = groupParticipation(snapshot, identities, false, 'tr');
+  assert.deepEqual(refreshed.map(g => g.label), hidden.map(g => g.label));
+  assert.equal(refreshed.find(g => g.count > 0).count, 13);
 });
