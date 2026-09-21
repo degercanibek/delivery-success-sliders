@@ -1,3 +1,4 @@
+import { parseArchive } from './imports.mjs';
 import { initialAllocation, setAllocation, remainingFor, useRemaining, validAllocation } from './allocation.mjs';
 import { identityMap, chartOption, liveFeed, groupParticipation } from './presentation.mjs';
 import { responsesCsv, downloadFile } from './exports.mjs';
@@ -16,6 +17,8 @@ const title = item => item[`title_${lang}`] || item.title_tr || item.title_en;
 const description = item => item[`description_${lang}`] || '';
 const link = (page, slug) => `#${page}${slug ? `?s=${encodeURIComponent(slug)}` : ''}`;
 const errors = {
+  DSS_ARCHIVE: ['Geçersiz JSON arşivi. Sürüm 1 dışa aktarımını kullanın (en fazla 5 MB, 100 grup/boyut, 10.000 yanıt).', 'Invalid JSON archive. Use a version 1 export (up to 5 MB, 100 groups/dimensions, 10,000 responses).'],
+  DSS_PREVIEW: ['Önce JSON içeriğini önizleyin.', 'Preview the JSON content first.'],
   PGRST202: ['Bu özellik henüz hazır değil. Lütfen oturum yöneticisine haber verin.', 'This feature is not ready yet. Please contact the session organizer.'],
   DSS_FORBIDDEN: ['Bu alan yalnızca yetkili yönetici içindir.', 'This area requires an allowlisted administrator.'],
   DSS_NOT_FOUND: ['Oturum veya kayıt bulunamadı; silinmiş olabilir.', 'The session or record was not found; it may have been deleted.'],
@@ -194,13 +197,46 @@ async function admin(current) {
   if (!await requireAdmin()) { if (current()) login(current); return; }
   const sessions = await checked(sb.from('sessions').select('*').order('created_at', { ascending: false }));
   if (!current()) return;
-  const root = layout(`<div class="stack"><section class="card"><div class="top"><h1>${tr('Oturumlar', 'Sessions')}</h1><button class="btn" id="logout">${tr('Çıkış', 'Sign out')}</button></div><div class="admin-list">${sessions.map(s => `<div class="item"><div><b>${esc(title(s))}</b><div class="muted">${esc(s.slug)} · ${s.is_open ? tr('Açık', 'Open') : tr('Kapalı', 'Closed')}</div></div><a class="btn" href="${link('manage', s.slug)}">${tr('Yönet', 'Manage')}</a></div>`).join('')}</div></section><form class="card stack"><h2>${tr('Yeni Oturum', 'New Session')}</h2><label>${tr('Kısa ad', 'Slug')}<input name="slug" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="mvp-test-01" aria-describedby="slug-help" title="${tr('Küçük İngilizce harfler, rakamlar ve kelimeler arasında tek tire. Örnek: mvp-test-01', 'Lowercase English letters, numbers, and single hyphens between words. Example: mvp-test-01')}" required></label><p id="slug-help" class="muted">${tr('Kısa ad oturum bağlantısında kullanılır ve benzersiz olmalıdır. a–z, 0–9 ve kelimeler arasında tek tire kullanın; boşluk veya Türkçe karakter kullanmayın. Örnek: mvp-test-01', 'The slug is the unique name in your session link. Use a–z, 0–9, and single hyphens between words; no spaces or Turkish characters. Example: mvp-test-01')}</p>${fields('title')}<p class="muted">${tr('Yeni oturum kapalı başlar. Grupları ve boyutları ekledikten sonra açın.', 'New sessions start closed. Add groups and dimensions before opening voting.')}</p><button class="btn primary" type="submit">${tr('Oluştur', 'Create')}</button></form></div>`);
+  const root = layout(`<div class="stack"><section class="card"><div class="top"><h1>${tr('Oturumlar', 'Sessions')}</h1><button class="btn" id="logout">${tr('Çıkış', 'Sign out')}</button></div><div class="admin-list">${sessions.map(s => `<div class="item"><div><b>${esc(title(s))}</b><div class="muted">${esc(s.slug)} · ${s.is_open ? tr('Açık', 'Open') : tr('Kapalı', 'Closed')}</div></div><a class="btn" href="${link('manage', s.slug)}">${tr('Yönet', 'Manage')}</a></div>`).join('')}</div></section><form class="card stack"><h2>${tr('Yeni Oturum', 'New Session')}</h2><label>${tr('Kısa ad', 'Slug')}<input name="slug" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="mvp-test-01" aria-describedby="slug-help" title="${tr('Küçük İngilizce harfler, rakamlar ve kelimeler arasında tek tire. Örnek: mvp-test-01', 'Lowercase English letters, numbers, and single hyphens between words. Example: mvp-test-01')}" required></label><p id="slug-help" class="muted">${tr('Kısa ad oturum bağlantısında kullanılır ve benzersiz olmalıdır. a–z, 0–9 ve kelimeler arasında tek tire kullanın; boşluk veya Türkçe karakter kullanmayın. Örnek: mvp-test-01', 'The slug is the unique name in your session link. Use a–z, 0–9, and single hyphens between words; no spaces or Turkish characters. Example: mvp-test-01')}</p>${fields('title')}<p class="muted">${tr('Yeni oturum kapalı başlar. Grupları ve boyutları ekledikten sonra açın.', 'New sessions start closed. Add groups and dimensions before opening voting.')}</p><button class="btn primary" type="submit">${tr('Oluştur', 'Create')}</button></form>${importPanel()}</div>`);
+  setupImport(root, current);
   action(root, root.querySelector('#logout'), async () => { await checked(sb.auth.signOut()); if (current()) await route(); });
   action(root, root.querySelector('form'), async () => {
     const data = formData(root.querySelector('form'));
     await adminAction('create_session', null, data);
     if (current()) location.hash = link('manage', data.slug);
   }, 'submit');
+}
+function importPanel() {
+  return `<section class="card stack"><h2>${tr('JSON İçe Aktar', 'Import JSON')}</h2><p>${tr('Arşivi yeni ve kapalı bir oturuma aktarın. Mevcut oturumlar değişmez.', 'Import an archive into a new closed session. Existing sessions are unchanged.')}</p><label>${tr('JSON dosyası', 'JSON file')}<input id="import-file" type="file" accept=".json,application/json"></label><label>${tr('veya JSON içeriğini yapıştırın', 'or paste JSON content')}<textarea id="import-json" rows="6"></textarea></label><button class="btn" id="import-preview">${tr('Önizle', 'Preview')}</button><p id="import-summary" role="status"></p><form id="import-form" class="stack"><label>${tr('Yeni oturum kısa adı', 'New session slug')}<input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="archive-copy"></label><label class="choice"><input type="checkbox" name="include_responses" checked>${tr('Yanıtları da içe aktar', 'Include responses')}</label><p class="muted">${tr('Kısa ad: a–z, 0–9 ve tek tire. Arşiv oyları anonim kopyalardır; önceki tarayıcılarla düzenlenemez.', 'Slug: a–z, 0–9 and single hyphens. Archived votes are anonymous copies; original browsers cannot edit them.')}</p><button class="btn primary" type="submit">${tr('Yeni Oturuma Aktar', 'Import as New Session')}</button></form></section>`;
+}
+function setupImport(root, current) {
+  const text = root.querySelector('#import-json'), file = root.querySelector('#import-file');
+  let preview = null;
+  const invalidate = () => { preview = null; root.querySelector('#import-summary').textContent = ''; };
+  text.addEventListener('input', invalidate);
+  file.addEventListener('change', async () => {
+    invalidate(); const selected = file.files?.[0]; if (!selected) return;
+    try {
+      if (selected.size > 5 * 1024 * 1024) throw Error('DSS_ARCHIVE');
+      const content = await selected.text();
+      if (root.isConnected && file.files?.[0] === selected) text.value = content;
+    } catch (error) { if (root.isConnected) showError(root, error); }
+  });
+  action(root, root.querySelector('#import-preview'), async () => {
+    preview = null;
+    const archive = parseArchive(text.value);
+    preview = { source: text.value, archive };
+    root.querySelector('#import-summary').textContent = `${title(archive.session) || ''} · ${archive.groups.length} ${tr('grup', 'groups')} · ${archive.dimensions.length} ${tr('boyut', 'dimensions')} · ${archive.responses.length} ${tr('yanıt', 'responses')}`;
+  });
+  action(root, root.querySelector('#import-form'), async () => {
+    if (!preview || preview.source !== text.value) throw Error('DSS_PREVIEW');
+    const form = root.querySelector('#import-form'), data = formData(form);
+    await checked(sb.rpc('import_session', { p_archive: preview.archive, p_slug: data.slug, p_include_responses: form.querySelector('[name=include_responses]').checked }));
+    if (current()) location.hash = link('manage', data.slug);
+  }, 'submit');
+}
+function populateForm(form, item) {
+  for (const element of form.elements) if (element.name && Object.hasOwn(item, element.name)) element.value = item[element.name] ?? '';
 }
 function sharingPanel(slug, opened) {
   const url = new URL(location.href);
@@ -235,9 +271,25 @@ async function manage(slug, current) {
   const { session, groups, dimensions, results } = await sessionData(slug, true);
   if (!current()) return;
   const locked = results.response_count > 0 || session.is_open;
-  const config = (type, items, label) => `<section class="card stack"><h2>${label}</h2><div class="admin-list">${items.map(item => `<div class="item"><div><b>${esc(name(item))}</b><div class="muted">${esc(description(item))}</div></div><button class="btn danger" data-delete="${type}" data-id="${item.id}" ${locked ? 'disabled' : ''} aria-label="${esc(tr('Sil: ', 'Delete: ') + name(item))}">×</button></div>`).join('')}</div><form data-add="${type}"><fieldset ${locked ? 'disabled' : ''}>${fields('name', true)}<button class="btn primary" type="submit">${tr('Ekle', 'Add')}</button></fieldset></form></section>`;
-  const root = layout(`<div class="stack"><section class="card stack"><h1>${esc(title(session))}</h1><p>${esc(description(session))}</p><div>${results.response_count} ${tr('yanıt', 'responses')} · ${session.is_open ? tr('Oylama açık', 'Voting open') : tr('Oylama kapalı', 'Voting closed')}</div><nav class="nav"><a class="btn" href="${link('vote', slug)}">${tr('Oylama', 'Vote')}</a><a class="btn" href="${link('results', slug)}">${tr('Sonuçlar', 'Results')}</a><button class="btn primary" id="toggle">${session.is_open ? tr('Oylamayı Kapat', 'Close Voting') : tr('Oylamayı Aç', 'Open Voting')}</button><button class="btn danger" id="wipe">${tr('Tüm Yanıtları Sil', 'Delete All Responses')}</button><button class="btn danger" id="delete-session">${tr('Oturumu Sil', 'Delete Session')}</button></nav>${locked ? `<p class="muted">${results.response_count ? tr('Yapılandırma kilitli. Değiştirmek için önce tüm yanıtları silin.', 'Configuration is locked. Delete all responses before making changes.') : tr('Yapılandırmayı değiştirmek için oylamayı kapatın.', 'Close voting to change the configuration.')}</p>` : ''}</section><section class="card stack"><div class="nav"><button class="btn" id="export-csv">${tr('CSV İndir', 'Export CSV')}</button><button class="btn" id="export-json">${tr('JSON Arşivi İndir', 'Export JSON')}</button></div><p class="muted">${tr('Dışa aktarımlar yalnızca yönetici içindir; bireysel yanıtları içerir.', 'Admin-only exports include individual responses.')}</p><details><summary>${tr('Oturumu Çoğalt', 'Duplicate Session')}</summary><form id="duplicate-form" class="stack"><p class="muted">${tr('İçerik, gruplar ve boyutlar kopyalanır. Yanıtlar kopyalanmaz; yeni oturum kapalı başlar.', 'Copies content, groups and dimensions, never responses. The new session starts closed.')}</p><label>${tr('Yeni kısa ad', 'New slug')}<input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="${esc(slug)}-copy" aria-describedby="duplicate-help"></label><small id="duplicate-help" class="muted">${tr('a–z, 0–9 ve kelimeler arasında tek tire. Boşluk kullanmayın.', 'Use a–z, 0–9 and single hyphens between words. No spaces.')}</small><button class="btn primary" type="submit">${tr('Kopyayı Oluştur', 'Create Copy')}</button></form></details></section>${sharingPanel(slug, session.is_open)}<div class="grid2">${config('group', groups, tr('Gruplar', 'Groups'))}${config('dimension', dimensions, tr('Başarı Boyutları', 'Success Dimensions'))}</div></div>`);
+  const config = (type, items, label) => `<section class="card stack"><h2>${label}</h2><div class="admin-list">${items.map(item => `<div class="item"><div><b>${esc(name(item))}</b><div class="muted">${esc(description(item))}</div></div><details><summary>${tr('Düzenle', 'Edit')}</summary><form data-edit="${type}" data-id="${item.id}" class="stack">${fields('name', true)}<label>${tr('Sıra', 'Order')}<input name="sort_order" type="number" step="1" required></label><button class="btn primary" type="submit">${tr('Kaydet', 'Save')}</button></form></details><button class="btn danger" data-delete="${type}" data-id="${item.id}" ${locked ? 'disabled' : ''} aria-label="${esc(tr('Sil: ', 'Delete: ') + name(item))}">×</button></div>`).join('')}</div><form data-add="${type}"><fieldset ${locked ? 'disabled' : ''}>${fields('name', true)}<button class="btn primary" type="submit">${tr('Ekle', 'Add')}</button></fieldset></form></section>`;
+  const root = layout(`<div class="stack"><section class="card stack"><h1>${esc(title(session))}</h1><p>${esc(description(session))}</p><div>${results.response_count} ${tr('yanıt', 'responses')} · ${session.is_open ? tr('Oylama açık', 'Voting open') : tr('Oylama kapalı', 'Voting closed')}</div><nav class="nav"><a class="btn" href="${link('vote', slug)}">${tr('Oylama', 'Vote')}</a><a class="btn" href="${link('results', slug)}">${tr('Sonuçlar', 'Results')}</a><button class="btn primary" id="toggle">${session.is_open ? tr('Oylamayı Kapat', 'Close Voting') : tr('Oylamayı Aç', 'Open Voting')}</button><button class="btn danger" id="wipe">${tr('Tüm Yanıtları Sil', 'Delete All Responses')}</button><button class="btn danger" id="delete-session">${tr('Oturumu Sil', 'Delete Session')}</button></nav>${locked ? `<p class="muted">${results.response_count ? tr('Grup/boyut ekleme ve silme kilitli. Ad ve açıklamalar düzenlenebilir.', 'Adding/deleting groups or dimensions is locked. Names and descriptions can be edited.') : tr('Yapılandırmayı değiştirmek için oylamayı kapatın.', 'Close voting to change the configuration.')}</p>` : ''}<details><summary>${tr('Oturum Bilgilerini Düzenle', 'Edit Session Details')}</summary><form id="session-edit" class="stack"><label>${tr('Kısa ad', 'Slug')}<input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*"></label><p class="muted">${tr('Kısa adı değiştirmek eski katılımcı bağlantılarını ve QR kodlarını geçersiz kılar.', 'Changing the slug invalidates previous participant links and QR codes.')}</p>${fields('title')}<button class="btn primary" type="submit">${tr('Kaydet', 'Save')}</button></form></details></section><section class="card stack"><div class="nav"><button class="btn" id="export-csv">${tr('CSV İndir', 'Export CSV')}</button><button class="btn" id="export-json">${tr('JSON Arşivi İndir', 'Export JSON')}</button></div><p class="muted">${tr('Dışa aktarımlar yalnızca yönetici içindir; bireysel yanıtları içerir.', 'Admin-only exports include individual responses.')}</p><details><summary>${tr('Oturumu Çoğalt', 'Duplicate Session')}</summary><form id="duplicate-form" class="stack"><p class="muted">${tr('İçerik, gruplar ve boyutlar kopyalanır. Yanıtlar kopyalanmaz; yeni oturum kapalı başlar.', 'Copies content, groups and dimensions, never responses. The new session starts closed.')}</p><label>${tr('Yeni kısa ad', 'New slug')}<input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="${esc(slug)}-copy" aria-describedby="duplicate-help"></label><small id="duplicate-help" class="muted">${tr('a–z, 0–9 ve kelimeler arasında tek tire. Boşluk kullanmayın.', 'Use a–z, 0–9 and single hyphens between words. No spaces.')}</small><button class="btn primary" type="submit">${tr('Kopyayı Oluştur', 'Create Copy')}</button></form></details></section>${sharingPanel(slug, session.is_open)}<div class="grid2">${config('group', groups, tr('Gruplar', 'Groups'))}${config('dimension', dimensions, tr('Başarı Boyutları', 'Success Dimensions'))}</div></div>`);
   setupSharing(root);
+  const editForm = root.querySelector('#session-edit');
+  populateForm(editForm, session);
+  action(root, editForm, async () => {
+    const data = formData(editForm);
+    if (data.slug !== session.slug && !confirm(tr('Kısa ad değişecek; eski bağlantılar çalışmayacak. Devam edilsin mi?', 'Change the slug? Old links will stop working.'))) return;
+    await checked(sb.rpc('edit_session_content', { p_session_id: session.id, p_kind: 'session', p_payload: data }));
+    if (current()) { if (data.slug !== slug) location.hash = link('manage', data.slug); else await route(); }
+  }, 'submit');
+  root.querySelectorAll('[data-edit]').forEach(form => {
+    const item = (form.dataset.edit === 'group' ? groups : dimensions).find(item => item.id === form.dataset.id);
+    populateForm(form, { ...item, sort_order: item.sort_order ?? 0 });
+    action(root, form, async () => {
+      await checked(sb.rpc('edit_session_content', { p_session_id: session.id, p_kind: form.dataset.edit, p_payload: { ...formData(form), id: item.id } }));
+      if (current()) await route();
+    }, 'submit');
+  });
   action(root, root.querySelector('#duplicate-form'), async () => {
     const data = formData(root.querySelector('#duplicate-form'));
     await checked(sb.rpc('duplicate_session', { p_session_id: session.id, p_slug: data.slug }));

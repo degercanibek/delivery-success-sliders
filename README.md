@@ -2,6 +2,18 @@
 
 Small bilingual workshop application: vanilla HTML/CSS/JavaScript, Supabase and Apache ECharts. No framework, bundler, build step or server-side application. Supabase is the backend; CDN scripts provide its browser SDK and ECharts.
 
+## Session editing and JSON import (migration 005)
+
+Apply the entire `migrations/005_session_edit_import.sql` in Supabase SQL Editor as the database owner after migration 004, before deploying this frontend. The migration adds two admin-only RPCs and is safe to rerun. Existing data and RLS remain unchanged; fresh installs use `supabase.sql`.
+
+In session management, **Edit Session Details** updates the slug, bilingual titles and descriptions. Each group/dimension has an **Edit** form for both languages, descriptions and display order. IDs and existing votes are preserved, even when voting is open. Changing a slug requires confirmation because old participant/results URLs and printed QR codes stop working. Renaming content changes how existing answers are interpreted, so keep their meaning consistent. Adding/deleting groups or dimensions still requires closed voting and zero responses.
+
+On the admin page, **Import JSON** accepts a file or pasted, manually edited JSON. Preview the title and record counts, enter a new unique slug and choose whether to include responses. Import creates a separate **closed** session; it never replaces an existing session. Use Results to inspect archived averages without reopening voting. Configuration-only import is useful for a new workshop.
+
+The format is the existing version 1 JSON export: `schema_version`, `session`, `groups`, `dimensions`, `responses`. Keep source IDs and answer keys consistent when editing JSON. The importer remaps session/group/dimension/response IDs, preserves response dates, generates new private device tokens and validates all included votes (matching group/dimensions, numeric 0–100 values, total 100). Original browsers cannot edit imported responses. Any invalid record rolls back the complete import. Limits: 5 MB, 100 groups, 100 dimensions and 10,000 responses; these are MVP safeguards, not load-test results.
+
+Verify after applying 005: edit both languages on a voted session; confirm votes remain; export/import with responses and compare counts/averages; import configuration only and confirm zero responses; try invalid JSON/allocations and confirm no partial session remains. Anonymous users and authenticated non-admins cannot call either RPC.
+
 ## Group counts and editing your own vote (migration 004)
 
 For an existing project with migration 003 applied, run the entire `migrations/004_edit_own_vote.sql` in Supabase SQL Editor as the database owner **before deploying this frontend**. Then reload the application. It is transactional and safe to rerun; it preserves existing responses, the unique session/device index, RLS and the admin allowlist. Fresh installs use the updated `supabase.sql`.
@@ -104,7 +116,7 @@ The database harness supplies minimal Supabase roles/auth helpers. It checks SQL
 3. Select a group. Drag sliders and edit numbers, including 0 and 100, on desktop and mobile. Changing a dimension must preserve the other values. Check remaining/over-budget feedback and per-dimension “Use remaining points” buttons. Submit must stay disabled until the total is exactly 100.
 4. Submit; verify success. Reopen in the same browser: the previous values must appear and Update my vote must keep the total response count unchanged. A direct duplicate `submit_vote` must still fail. Check a second profile can submit independently; closing voting must reject edits.
 5. Open results and wait up to about three seconds for new votes. Independently reveal labels, values and axis; adjust blur from 0–100%. Freeze to hold the displayed chart/count, submit a vote from another browser identity, and verify the display changes only after Unfreeze.
-6. After the first vote, configuration controls must be locked even after closing voting. Direct configuration RPC calls must fail too. Votes after close must fail.
+6. After the first vote, adding/deleting groups and dimensions must be locked even after closing voting. Direct structural mutation RPC calls must fail too; metadata editing remains available. Votes after close must fail.
 7. Confirm “Delete All Responses.” This also closes voting. Configuration should unlock; after reopening, the original browser can vote again.
 8. Confirm deletion of a disposable session. Its groups, dimensions and responses must disappear; old URLs must show a useful error.
 9. From a separate signed-out browser, verify `#results?s=SLUG` requires login and never shows counts or a chart. Check anonymous aggregate RPC calls, direct configuration/raw-response queries and administration mutations are denied. An authenticated non-admin must also be denied results. A known open slug may return only voting configuration; closed/missing slugs must fail. Test malformed allocations and groups/dimensions from a different session against the RPC. None should be stored.
@@ -145,7 +157,7 @@ Reveal is a presentation mechanism, not an authorization boundary. Database gran
 Session management now offers a compact Duplicate Session form requiring a new unique slug. The server atomically copies both languages, descriptions, groups, dimensions and sort order with new IDs. The copy starts closed with zero responses. Source data is untouched, even when the source has votes.
 
 - **CSV:** one row per individual response, including response ID/time, session slug, group ID and bilingual group names, plus one column per dimension with bilingual names and its ID. UTF-8 BOM supports Turkish in spreadsheets. Fields are quoted and formula-like text is escaped for spreadsheet safety.
-- **JSON:** a versioned archive containing the complete session, bilingual groups/dimensions and individual responses, with IDs and allocation mappings preserved. It supports later reuse; importing an archive is not implemented in this iteration.
+- **JSON:** a versioned archive containing the complete session, bilingual groups/dimensions and individual responses, with IDs and allocation mappings preserved. It can be imported into a separate closed session from the admin page, with optional responses.
 - Both exports come from one consistent server-side snapshot with no default 1,000-row API truncation. Only the allowlisted admin can call the export RPC. Device tokens are excluded from both formats.
 
 To verify the upgrade: duplicate a voted session and confirm the copy has zero responses/new configuration IDs; export the original in both formats and compare counts/values; check an authenticated non-admin and an anonymous client cannot call either RPC. The local PostgreSQL tests cover these permissions and an export exceeding 1,000 responses. Hosted validation of the new RPCs remains necessary after running the migration.

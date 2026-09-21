@@ -196,6 +196,68 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
     await assert.rejects(anon(update, [copy, config.groups[1].id, updated, token]), /DSS_VOTE_NOT_FOUND/);
     await action('delete_session', copy);
   });
+  await t.test('admin metadata edits and archive import preserve votes, isolate data and roll back invalid archives', async () => {
+    const migration = await readFile(new URL('../migrations/005_session_edit_import.sql', import.meta.url), 'utf8');
+    await db.exec(migration); await db.exec(migration);
+    const copy = (await admin("select public.duplicate_session($1,'edit-source') id", [sid]))[0].id;
+    const edit = 'select public.edit_session_content($1,$2,$3)';
+    const payload = { slug: 'renamed-source', title_tr: 'Yeni başlık', title_en: 'New title', description_tr: 'Açıklama', description_en: 'Description' };
+    await assert.rejects(anon(edit, [copy, 'session', payload]), /permission denied/);
+    await assert.rejects(as('authenticated', otherId, edit, [copy, 'session', payload]), /DSS_FORBIDDEN/);
+    await action('open', copy);
+    await admin(edit, [copy, 'session', payload]);
+    const config = (await anon("select public.voting_session('renamed-source') c"))[0].c;
+    assert.equal(config.session.id, copy);
+    const answers = Object.fromEntries(config.dimensions.map(d => [d.id, 50]));
+    await anon(cast, [copy, config.groups[0].id, answers, token]);
+    const content = { id: config.groups[0].id, name_tr: 'Yeni grup', name_en: 'New group', description_tr: 'TR', description_en: 'EN', sort_order: 9 };
+    await admin(edit, [copy, 'group', content]);
+    await admin(edit, [copy, 'dimension', { ...content, id: config.dimensions[0].id }]);
+    await assert.rejects(admin(edit, [copy, 'group', { ...content, id: gid }]), /DSS_NOT_FOUND/);
+    await assert.rejects(admin(edit, [copy, 'session', { ...payload, title_en: '' }]), /DSS_NAME/);
+    await assert.rejects(admin(edit, [copy, 'session', { ...payload, slug: 'test-session' }]), /duplicate key/);
+    await assert.rejects(action('delete_group', copy, { id: config.groups[0].id }), /DSS_LOCKED/);
+    const archive = (await admin('select public.export_session($1) a', [copy]))[0].a;
+    assert.equal(archive.responses.length, 1);
+    assert.deepEqual(archive.responses[0].answers, answers);
+    const imp = 'select public.import_session($1,$2,$3) id';
+    await assert.rejects(anon(imp, [archive, 'not-allowed', true]), /permission denied/);
+    await assert.rejects(as('authenticated', otherId, imp, [archive, 'not-allowed', true]), /DSS_FORBIDDEN/);
+    const imported = (await admin(imp, [archive, 'archive-restored', true]))[0].id;
+    const restored = (await admin('select public.export_session($1) a', [imported]))[0].a;
+    assert.notEqual(imported, copy);
+    assert.equal(restored.session.is_open, false);
+    assert.equal(restored.session.title_tr, payload.title_tr);
+    assert.equal(restored.responses.length, 1);
+    assert.equal(restored.responses[0].created_at, archive.responses[0].created_at);
+    assert.notEqual(restored.responses[0].id, archive.responses[0].id);
+    assert.notEqual(restored.groups[0].id, archive.groups[0].id);
+    assert.equal(restored.responses[0].group_id, restored.groups[0].id);
+    for (const d of restored.dimensions) assert.equal(restored.responses[0].answers[d.id], 50);
+    await action('open', imported);
+    assert.equal((await anon('select public.my_vote($1,$2) v', [imported, token]))[0].v, null);
+    await assert.rejects(anon('select public.session_results($1)', [imported]), /permission denied/);
+    const empty = (await admin(imp, [archive, 'configuration-only', false]))[0].id;
+    assert.equal((await admin('select public.export_session($1) a', [empty]))[0].a.responses.length, 0);
+    for (const mutate of [
+      a => a.schema_version = 99,
+      a => a.groups.push(a.groups[0]),
+      a => a.responses.push(a.responses[0]),
+      a => a.responses[0].group_id = 'missing',
+      a => a.responses[0].session_id = 'foreign',
+      a => a.responses[0].answers = {},
+      a => a.responses[0].answers = { ...a.responses[0].answers, unknown: 0 },
+      a => a.responses[0].answers[Object.keys(a.responses[0].answers)[0]] = -5,
+      a => a.responses[0].answers[Object.keys(a.responses[0].answers)[0]] = '50',
+      a => a.responses[0].created_at = 'invalid-date'
+    ]) {
+      const bad = structuredClone(archive); mutate(bad);
+      await assert.rejects(admin(imp, [bad, 'invalid-archive', true]), /DSS_/);
+      assert.equal((await admin("select count(*)::int n from public.sessions where slug='invalid-archive'"))[0].n, 0);
+    }
+    assert.equal((await admin('select public.export_session($1) a', [copy]))[0].a.responses.length, 1);
+    for (const id of [copy, imported, empty]) await action('delete_session', id);
+  });
   await t.test('locks configuration after votes, closes voting, and resets safely', async () => {
     await action('close', sid);
     await assert.rejects(anon(cast, [sid, gid, valid(), 'browser-token-three-0003']), /DSS_CLOSED/);
