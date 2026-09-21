@@ -136,7 +136,7 @@ Participants see only a language toggle, session title/description, group select
 
 Localhost QR links only work on the hosting computer. Phone participation requires a reachable site, normally deployed over HTTPS. This update does not enable hosting or change the local server binding.
 
-Each dimension is now independent. Its “Use remaining points” button sets it to 100 minus the others without changing them, and is disabled with an explanation if the others already exceed 100. The total turns red above 100; submission requires exactly 100. Existing database validation and duplicate protection remain unchanged. The second-iteration duplication/export tools require the additive SQL migration described above.
+New votes start with every dimension at zero; submission stays disabled until the total is exactly 100. Editing an existing vote retains its saved allocations. Each dimension is independent. Its “Use remaining points” button sets it to 100 minus the others without changing them, and is disabled with an explanation if the others already exceed 100. The total turns red above 100; submission requires exactly 100. Existing database validation and duplicate protection remain unchanged. The second-iteration duplication/export tools require the additive SQL migration described above.
 
 
 ## Presenter dashboard
