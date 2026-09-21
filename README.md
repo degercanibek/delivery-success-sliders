@@ -2,6 +2,16 @@
 
 Small bilingual workshop application: vanilla HTML/CSS/JavaScript, Supabase and Apache ECharts. No framework, bundler, build step or server-side application. Supabase is the backend; CDN scripts provide its browser SDK and ECharts.
 
+## Group counts and editing your own vote (migration 004)
+
+For an existing project with migration 003 applied, run the entire `migrations/004_edit_own_vote.sql` in Supabase SQL Editor as the database owner **before deploying this frontend**. Then reload the application. It is transactional and safe to rerun; it preserves existing responses, the unique session/device index, RLS and the admin allowlist. Fresh installs use the updated `supabase.sql`.
+
+Results legends show each group's response count, including zero. Hidden identities retain their existing Group A/B aliases. Counts refresh with the chart, respect Freeze Results, and are admin-only. Changing a vote's group transfers its count and recalculates averages without increasing the total.
+
+Returning participants in the same browser/origin see their previous group and allocations prefilled, with **Update my vote**. The confirmation also offers **Edit my vote**. Editing is allowed only while voting is open. `submit_vote` still rejects duplicates; a separate `update_vote` RPC updates the existing row using the same server validator and session lock. It cannot create a response. After an admin reset, reload to submit a new vote.
+
+The new `my_vote` endpoint returns only the matching response's group and allocations when given its session ID and private device token. It returns no response IDs, timestamps, tokens, counts or other participants' data. The token is a bearer capability: possession grants access to that one vote, so it must never be put in a shared URL or logged. This is browser-based ownership, not verified personal identity; clearing storage, switching domains, using another browser or a new private-browsing session does not recover the previous vote. Existing UUID tokens work without conversion. Public table reads and aggregate/export permissions are unchanged.
+
 ## Participant access upgrade (required for existing MVP projects)
 
 1. If not already applied, run the entire `migrations/002_presenter_tools.sql` in the Supabase SQL Editor as the database owner. This adds admin-only duplication and exports.
@@ -56,7 +66,7 @@ These instructions do not enable GitHub Pages or modify the hosted project autom
 - `voting_session(p_slug)`: minimal bilingual session/group/dimension content for a known, open session only. It exposes no counts, responses, device tokens or session list.
 - `session_results(...)`: allowlisted-admin-only aggregate response counts and group/dimension averages. It returns no raw responses, response IDs, timestamps, or device tokens. Groups without votes have no average and show no bar.
 
-Direct reads of sessions, groups, dimensions and raw responses are restricted to the allowlisted admin. Anonymous users and authenticated non-admins can only retrieve the minimal voting configuration through `voting_session` and submit a valid vote through `submit_vote`. They cannot enumerate sessions, query aggregates, or export responses. The results UI checks admin authentication and uses the admin-only aggregate RPC. Database-owner SQL access remains privileged for maintenance. RPCs use a fixed empty search path and explicit execute grants, following [Supabase function guidance](https://supabase.com/docs/guides/database/functions).
+Direct reads of sessions, groups, dimensions and raw responses are restricted to the allowlisted admin. Anonymous users and authenticated non-admins can only retrieve the minimal voting configuration through `voting_session` and submit a valid vote through `submit_vote`. With their private device token they can retrieve/edit only their own response through `my_vote`/`update_vote` while voting is open. They cannot enumerate sessions, query aggregates, or export responses. The results UI checks admin authentication and uses the admin-only aggregate RPC. Database-owner SQL access remains privileged for maintenance. RPCs use a fixed empty search path and explicit execute grants, following [Supabase function guidance](https://supabase.com/docs/guides/database/functions).
 
 “One vote per device” means one vote per browser profile/origin using a persistent localStorage token. The unique database index handles double clicks, retries and concurrent submissions with that token. Clearing storage, using private browsing, another profile, or deliberately supplying a different token bypasses this lightweight identity. It is not a verified-person voting system. Storage must be enabled. A database response reset permits that browser to vote again.
 
@@ -92,7 +102,7 @@ The database harness supplies minimal Supabase roles/auth helpers. It checks SQL
 1. Sign in at `#admin`. A signed-out visitor to `#manage?s=...` must get a login form. An authenticated account outside the allowlist must be denied, including direct RPC calls.
 2. Create a bilingual session. While closed, add at least one group and two dimensions. Open voting. Copy the voting URL into a separate browser profile.
 3. Select a group. Drag sliders and edit numbers, including 0 and 100, on desktop and mobile. Changing a dimension must preserve the other values. Check remaining/over-budget feedback and per-dimension “Use remaining points” buttons. Submit must stay disabled until the total is exactly 100.
-4. Submit; verify success. Retry from the same browser: the server must reject the duplicate. Check a second profile can submit.
+4. Submit; verify success. Reopen in the same browser: the previous values must appear and Update my vote must keep the total response count unchanged. A direct duplicate `submit_vote` must still fail. Check a second profile can submit independently; closing voting must reject edits.
 5. Open results and wait up to about three seconds for new votes. Independently reveal labels, values and axis; adjust blur from 0–100%. Freeze to hold the displayed chart/count, submit a vote from another browser identity, and verify the display changes only after Unfreeze.
 6. After the first vote, configuration controls must be locked even after closing voting. Direct configuration RPC calls must fail too. Votes after close must fail.
 7. Confirm “Delete All Responses.” This also closes voting. Configuration should unlock; after reopening, the original browser can vote again.

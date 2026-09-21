@@ -147,6 +147,55 @@ test('SQL migration, role boundaries, voting, aggregates and lifecycle', async t
     await assert.rejects(admin('select public.export_session($1)', [otherId]), /DSS_NOT_FOUND/);
     await action('delete_session', copiedId);
   });
+  await t.test('duplicate, configure four groups, vote independently and edit only the token-owned response', async () => {
+    const migration = await readFile(new URL('../migrations/004_edit_own_vote.sql', import.meta.url), 'utf8');
+    await db.exec(migration); await db.exec(migration);
+    const copy = (await admin("select public.duplicate_session($1,'editable-copy') id", [sid]))[0].id;
+    await action('close', copy);
+    for (const name of ['Product', 'Engineering', 'AGM']) await action('add_group', copy, { name_tr: name, name_en: name });
+    await action('open', copy);
+    const config = (await anon("select public.voting_session('editable-copy') c"))[0].c;
+    assert.equal(config.groups.length, 4);
+    const vals = Object.fromEntries(config.dimensions.map(d => [d.id, 50]));
+    const tokens = [token, 'independent-chrome-token', 'independent-incognito-token', 'independent-fourth-token'];
+    for (let i = 0; i < 4; i++) await anon(cast, [copy, config.groups[i].id, vals, tokens[i]]);
+    const before = (await admin('select * from public.responses where session_id=$1 order by device_token', [copy]));
+    const mine = (await anon('select public.my_vote($1,$2) v', [copy, token]))[0].v;
+    assert.deepEqual(Object.keys(mine).sort(), ['answers', 'group_id']);
+    assert.equal(mine.group_id, config.groups[0].id);
+    assert.equal((await anon('select public.my_vote($1,$2) v', [copy, 'unknown-private-token']))[0].v, null);
+    const update = 'select public.update_vote($1,$2,$3,$4)';
+    await assert.rejects(anon(update, [copy, config.groups[0].id, vals, 'unknown-private-token']), /DSS_VOTE_NOT_FOUND/);
+    await assert.rejects(anon(update, [copy, gid, vals, token]), /DSS_GROUP/);
+    await assert.rejects(anon(update, [copy, config.groups[0].id, {}, token]), /DSS_ANSWERS/);
+    await assert.rejects(anon(update, [copy, config.groups[0].id, { ...vals, [config.dimensions[0].id]: 0 }, token]), /DSS_TOTAL/);
+    const updated = { [config.dimensions[0].id]: 70, [config.dimensions[1].id]: 30 };
+    await anon(update, [copy, config.groups[1].id, updated, token]);
+    await anon(update, [copy, config.groups[1].id, updated, token]); // Retry never creates a row.
+    const after = await admin('select * from public.responses where session_id=$1 order by device_token', [copy]);
+    assert.equal(after.length, 4);
+    for (let i = 0; i < after.length; i++) {
+      assert.equal(after[i].id, before[i].id);
+      assert.deepEqual(after[i].created_at, before[i].created_at);
+      if (after[i].device_token !== token) assert.deepEqual(after[i], before[i]);
+      else assert.deepEqual(after[i].answers, updated);
+    }
+    const result = (await admin('select public.session_results($1) r', [copy]))[0].r;
+    assert.equal(result.response_count, 4);
+    assert.equal(result.groups.find(g => g.group_id === config.groups[0].id).response_count, 0);
+    assert.equal(result.groups.find(g => g.group_id === config.groups[1].id).response_count, 2);
+    assert.equal(result.averages.find(a => a.group_id === config.groups[1].id && a.dimension_id === config.dimensions[0].id).average, 60);
+    await assert.rejects(anon(cast, [copy, config.groups[0].id, vals, token]), /DSS_DUPLICATE/);
+    await assert.rejects(anon('select * from public.responses'), /permission denied/);
+    await assert.rejects(anon('select public.session_results($1)', [copy]), /permission denied/);
+    await action('close', copy);
+    await assert.rejects(anon(update, [copy, config.groups[1].id, updated, token]), /DSS_CLOSED/);
+    await assert.rejects(anon('select public.my_vote($1,$2)', [copy, token]), /DSS_CLOSED/);
+    await action('delete_responses', copy); await action('open', copy);
+    assert.equal((await anon('select public.my_vote($1,$2) v', [copy, token]))[0].v, null);
+    await assert.rejects(anon(update, [copy, config.groups[1].id, updated, token]), /DSS_VOTE_NOT_FOUND/);
+    await action('delete_session', copy);
+  });
   await t.test('locks configuration after votes, closes voting, and resets safely', async () => {
     await action('close', sid);
     await assert.rejects(anon(cast, [sid, gid, valid(), 'browser-token-three-0003']), /DSS_CLOSED/);

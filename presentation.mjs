@@ -31,11 +31,13 @@ export function chartOption({ groups, dimensions, results }, visible, identities
   for (const d of dimensions) if (!dimensionAliases.has(d.id)) dimensionAliases.set(d.id, dimensionAliases.size);
   const dimensionNames = dimensions.map(d => visible.categories ? localized(d) : `${lang === 'tr' ? 'Boyut' : 'Dimension'} ${letter(dimensionAliases.get(d.id))}`);
   const values = new Map(results.averages.map(a => [`${a.group_id}/${a.dimension_id}`, a.average]));
+  const counts = new Map((results.groups || []).map(g => [g.group_id, g.response_count]));
+  const legendCounts = new Map(ordered.map(g => [visible.groups ? localized(g) : `${lang === 'tr' ? 'Grup' : 'Group'} ${letter(identities.index(g.id))}`, counts.get(g.id) || 0]));
   return {
     backgroundColor: 'transparent', animation: !reducedMotion, animationDuration: 650, animationDurationUpdate: 550, animationEasingUpdate: 'cubicOut',
     aria: { enabled: false }, // Avoid automatic descriptions leaking hidden values or names.
     tooltip: { show: visible.values, trigger: 'axis', renderMode: 'richText', confine: true, backgroundColor: '#151d32', borderColor: '#354161', textStyle: { color: '#eef2ff', fontSize: px(14) } },
-    legend: { show: true, type: 'scroll', top: px(8), icon: 'roundRect', selectedMode: false, itemWidth: px(14), itemHeight: px(8), itemGap: px(24), pageTextStyle: { color: '#c4cde6', fontSize: px(12) }, pageIconSize: px(12), textStyle: { color: '#c4cde6', fontSize: px(13) } },
+    legend: { formatter: label => `${label} · ${legendCounts.get(label) || 0} ${lang === 'tr' ? 'oy' : 'votes'}`, show: true, type: 'scroll', top: px(8), icon: 'roundRect', selectedMode: false, itemWidth: px(14), itemHeight: px(8), itemGap: px(24), pageTextStyle: { color: '#c4cde6', fontSize: px(12) }, pageIconSize: px(12), textStyle: { color: '#c4cde6', fontSize: px(13) } },
     grid: { containLabel: true, left: px(24), right: px(24), bottom: px(28), top: px(80) },
     xAxis: { type: 'category', data: dimensionNames, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: '#dce4fb', fontSize: px(15), margin: px(22), interval: 0, width: Math.max(60, Math.floor((width - px(100)) / Math.max(1, dimensions.length) - px(18))), overflow: 'truncate' } },
     yAxis: { type: 'value', min: 0, max: 100, show: visible.axis, axisLabel: { color: '#8c9bbd', fontSize: px(12) }, splitLine: { lineStyle: { color: 'rgba(174,192,231,0.08)', type: 'dashed' } }, axisLine: { show: false }, axisTick: { show: false } },

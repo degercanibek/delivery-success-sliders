@@ -74,3 +74,19 @@ test('chart typography, bar width and spacing scale with the available window', 
   assert.ok(make(3000, 300).series[0].label.fontSize < projected.series[0].label.fontSize);
   assert.ok(make(300, 200).legend.textStyle.fontSize >= 10);
 });
+
+
+test('group counts use reveal aliases and update independently of exact values', () => {
+  const identities = identityMap(() => 0), aliases = new Map();
+  const snapshot = { ...data, results: { ...data.results, groups: [{ group_id: 'lead', response_count: 12 }] } };
+  const hidden = chartOption(snapshot, {}, identities, aliases, 'tr');
+  const series = hidden.series.find(s => s.data[0] === 40);
+  assert.equal(hidden.legend.formatter(series.name), `${series.name} · 12 oy`);
+  assert.ok(!hidden.legend.formatter(series.name).includes('Leadership'));
+  const shown = chartOption(snapshot, { groups: true }, identities, aliases, 'en');
+  assert.equal(shown.legend.formatter('Leadership'), 'Leadership · 12 votes');
+  assert.equal(shown.legend.formatter('Product'), 'Product · 0 votes');
+  snapshot.results.groups[0].response_count = 13;
+  const refreshed = chartOption(snapshot, {}, identities, aliases, 'tr');
+  assert.equal(refreshed.legend.formatter(series.name), `${series.name} · 13 oy`);
+});
