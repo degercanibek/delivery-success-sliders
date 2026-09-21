@@ -48,6 +48,8 @@ function harness(hash, options = {}) {
         if (options.loadError) return { error: { message: 'network failure' } };
         return { data: { session, groups: options.groups || groups, dimensions: options.dimensions || dimensions } };
       }
+      if (fn === 'my_vote') return { data: options.previous || null };
+      if (fn === 'update_vote') return { data: null };
       if (fn === 'is_admin') return { data: !!options.isAdmin };
       if (fn === 'submit_vote') return options.submit ? options.submit(params) : { data: null };
       if (fn === 'session_results') return { data: options.aggregate || { response_count: 0, groups: [], averages: [] } };
@@ -275,7 +277,7 @@ test('participant loading, voting, confirmation and language switch never contai
   await waitFor(() => h.document.querySelector('#send'));
   isolated();
   assert.deepEqual(h.tableReads, []);
-  assert.deepEqual(h.calls.map(call => call.fn), ['voting_session']);
+  assert.deepEqual(h.calls.map(call => call.fn), ['voting_session', 'my_vote']);
   assert.ok(h.document.querySelector('.budget-complete'));
   h.document.querySelector('[name=group]').checked = true;
   h.document.querySelector('#send').click();
@@ -325,5 +327,25 @@ test('admin stays signed in between management and results; signout immediately 
   assert.equal(h.document.querySelector('#chart, #count'), null);
   await waitFor(() => h.document.querySelector('[name=password]'));
   assert.equal(h.ticks.size, 0);
+  h.dom.window.close();
+});
+
+
+test('returning participant edits prefilled own vote without results or administration links', async () => {
+  const h = harness('#vote?s=test', { previous: { group_id: 'group-one', answers: { 'dimension-0': 50, 'dimension-1': 30, 'dimension-2': 20 } } });
+  await waitFor(() => h.document.querySelector('#send'));
+  assert.match(h.document.querySelector('#send').textContent, /Güncelle/);
+  assert.equal(h.document.querySelector('[name=group]').checked, true);
+  assert.equal(h.document.querySelector('[data-number="dimension-0"]').value, '50');
+  h.document.querySelector('#send').click();
+  await waitFor(() => h.document.querySelector('#edit-vote'));
+  const update = h.calls.find(c => c.fn === 'update_vote');
+  assert.ok(update);
+  assert.equal(update.params.p_device_token, h.calls.find(c => c.fn === 'my_vote').params.p_device_token);
+  assert.equal(h.calls.some(c => c.fn === 'submit_vote'), false);
+  assert.equal(h.document.querySelectorAll('a, nav').length, 0);
+  h.document.querySelector('#edit-vote').click();
+  await waitFor(() => h.document.querySelector('#send'));
+  assert.match(h.document.querySelector('#send').textContent, /Güncelle/);
   h.dom.window.close();
 });

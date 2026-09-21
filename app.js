@@ -25,6 +25,7 @@ const errors = {
   DSS_ANSWERS: ['Her boyut için 0–100 arasında geçerli bir sayı girin.', 'Enter a valid number from 0 to 100 for every dimension.'],
   DSS_TOTAL: ['Puanların toplamı tam olarak 100 olmalıdır.', 'The allocation must total exactly 100.'],
   DSS_DUPLICATE: ['Bu tarayıcı bu oturumda zaten oy kullandı.', 'This browser has already voted in this session.'],
+  DSS_VOTE_NOT_FOUND: ['Önceki yanıt bulunamadı. Sayfayı yenileyip tekrar oy verin.', 'Your previous response was not found. Reload to submit a new vote.'],
   DSS_DEVICE: ['Oy vermek için tarayıcı depolamasını etkinleştirin.', 'Enable browser storage to vote.'],
   DSS_LOCKED: ['Yapılandırmayı değiştirmeden önce tüm yanıtları silin.', 'Delete all responses before changing the configuration.'],
   DSS_CLOSE_FIRST: ['Yapılandırmayı değiştirmeden önce oylamayı kapatın.', 'Close voting before changing the configuration.'],
@@ -113,8 +114,9 @@ const formData = form => Object.fromEntries(new FormData(form));
 async function home() {
   layout(`<section class="card participant-message"><h1>${tr('Oturuma katılın', 'Join your session')}</h1><p>${tr('Oy vermek için sunucunun paylaştığı QR kodunu tarayın veya katılımcı bağlantısını açın.', 'Scan the presenter’s QR code or open your participant link to vote.')}</p></section>`);
 }
-function submitted() {
-  layout(`<section class="card participant-message"><div class="submitted-mark" aria-hidden="true">✓</div><h2>${tr('Teşekkürler', 'Thank you')}</h2><p>${tr('Cevabınız kaydedildi. Bu sayfayı kapatabilirsiniz.', 'Your response has been recorded. You can close this page.')}</p></section>`);
+function submitted(slug) {
+  layout(`<section class="card participant-message"><div class="submitted-mark" aria-hidden="true">✓</div><h2>${tr('Teşekkürler', 'Thank you')}</h2><p>${tr('Cevabınız kaydedildi. Oylama açıkken aynı tarayıcıdan oyunuza geri dönebilirsiniz.', 'Your response has been recorded. You can edit it in this browser while voting is open.')}</p><button class="btn" id="edit-vote">${tr('Oyumu Düzenle', 'Edit my vote')}</button></section>`);
+  document.querySelector('#edit-vote').onclick = () => { submittedSessions.delete(slug); void route(); };
 }
 function deviceToken() {
   try {
@@ -128,15 +130,22 @@ function deviceToken() {
   } catch { throw Error('DSS_DEVICE'); }
 }
 async function vote(slug, current) {
-  if (submittedSessions.has(slug)) { if (current()) submitted(); return; }
+  if (submittedSessions.has(slug)) { if (current()) submitted(slug); return; }
   if (!slug) throw Error('DSS_NOT_FOUND');
   const { session, groups, dimensions } = await checked(sb.rpc('voting_session', { p_slug: slug }));
   if (!current()) return;
   if (!session.is_open) throw Error('DSS_CLOSED');
   if (groups.length < 1 || dimensions.length < 2) throw Error('DSS_CONFIG');
-  const ids = dimensions.map(d => d.id), values = initialAllocation(ids);
+  const ids = dimensions.map(d => d.id);
   const token = deviceToken();
-  const root = layout(`<div class="stack voting-page"><section class="card vote-intro"><h1>${esc(title(session))}</h1><p class="muted">${esc(description(session))}</p><fieldset><legend><span class="step-number">1</span> ${tr('Grubunuzu seçin', 'Choose your group')}</legend><div class="group-choices">${groups.map(g => `<label class="choice"><input type="radio" name="group" value="${g.id}"><span><b>${esc(name(g))}</b><span class="muted block">${esc(description(g))}</span></span></label>`).join('')}</div></fieldset></section><section class="card allocation-card"><h2><span class="step-number">2</span> ${tr('100 puanı dağıtın', 'Allocate 100 points')}</h2><p class="muted">${tr('Her boyutu bağımsız ayarlayın. Bir boyutu kalan puanlarla tamamlamak için düğmesini kullanın.', 'Adjust each dimension independently. Use its button to fill the remaining points.')}</p><div class="stack">${dimensions.map(d => `<div class="slider"><div><label for="r-${d.id}"><b>${esc(name(d))}</b></label><div class="muted">${esc(description(d))}</div></div><input id="r-${d.id}" type="range" min="0" max="100" step="1" value="${values[d.id]}" data-range="${d.id}" aria-label="${esc(name(d))}"><input type="number" inputmode="numeric" min="0" max="100" step="1" value="${values[d.id]}" data-number="${d.id}" aria-label="${esc(name(d))} ${tr('puan', 'points')}"><div class="balance-control"><button class="btn" data-balance="${d.id}" aria-describedby="hint-${d.id}">${tr('Kalan Puanı Kullan', 'Use remaining points')}</button><small class="muted block" id="hint-${d.id}" data-balance-hint="${d.id}"></small></div></div>`).join('')}</div></section><div class="vote-dock"><div><div class="total">${tr('Toplam', 'Total')}: <output id="total">100</output><span class="muted">/100</span></div><p id="budget-status" role="status" aria-live="polite"></p></div><button class="btn primary" id="send">${tr('Oyumu Gönder', 'Submit Vote')} →</button></div></div>`);
+  const previous = await checked(sb.rpc('my_vote', { p_session_id: session.id, p_device_token: token }));
+  if (!current()) return;
+  const values = previous ? { ...previous.answers } : initialAllocation(ids);
+  const root = layout(`<div class="stack voting-page"><section class="card vote-intro"><h1>${esc(title(session))}</h1><p class="muted">${esc(description(session))}</p><fieldset><legend><span class="step-number">1</span> ${tr('Grubunuzu seçin', 'Choose your group')}</legend><div class="group-choices">${groups.map(g => `<label class="choice"><input type="radio" name="group" value="${g.id}"><span><b>${esc(name(g))}</b><span class="muted block">${esc(description(g))}</span></span></label>`).join('')}</div></fieldset></section><section class="card allocation-card"><h2><span class="step-number">2</span> ${tr('100 puanı dağıtın', 'Allocate 100 points')}</h2><p class="muted">${tr('Her boyutu bağımsız ayarlayın. Bir boyutu kalan puanlarla tamamlamak için düğmesini kullanın.', 'Adjust each dimension independently. Use its button to fill the remaining points.')}</p><div class="stack">${dimensions.map(d => `<div class="slider"><div><label for="r-${d.id}"><b>${esc(name(d))}</b></label><div class="muted">${esc(description(d))}</div></div><input id="r-${d.id}" type="range" min="0" max="100" step="1" value="${values[d.id]}" data-range="${d.id}" aria-label="${esc(name(d))}"><input type="number" inputmode="numeric" min="0" max="100" step="1" value="${values[d.id]}" data-number="${d.id}" aria-label="${esc(name(d))} ${tr('puan', 'points')}"><div class="balance-control"><button class="btn" data-balance="${d.id}" aria-describedby="hint-${d.id}">${tr('Kalan Puanı Kullan', 'Use remaining points')}</button><small class="muted block" id="hint-${d.id}" data-balance-hint="${d.id}"></small></div></div>`).join('')}</div></section><div class="vote-dock"><div><div class="total">${tr('Toplam', 'Total')}: <output id="total">100</output><span class="muted">/100</span></div><p id="budget-status" role="status" aria-live="polite"></p></div><button class="btn primary" id="send">${previous ? tr('Oyumu Güncelle', 'Update my vote') : tr('Oyumu Gönder', 'Submit Vote')} →</button></div></div>`);
+  if (previous) {
+    const selected = [...root.querySelectorAll('[name=group]')].find(input => input.value === previous.group_id);
+    if (selected) selected.checked = true;
+  }
   const sync = () => {
     root.querySelectorAll('[data-range]').forEach(input => { input.value = values[input.dataset.range]; });
     root.querySelectorAll('[data-number]').forEach(input => { input.value = values[input.dataset.number]; });
@@ -169,9 +178,9 @@ async function vote(slug, current) {
     if (!group) throw Error('DSS_GROUP');
     sync();
     if (!validAllocation(values, ids)) throw Error('DSS_TOTAL');
-    await checked(sb.rpc('submit_vote', { p_session_id: session.id, p_group_id: group, p_answers: { ...values }, p_device_token: token }));
+    await checked(sb.rpc(previous ? 'update_vote' : 'submit_vote', { p_session_id: session.id, p_group_id: group, p_answers: { ...values }, p_device_token: token }));
     submittedSessions.add(slug);
-    if (root.isConnected) submitted();
+    if (root.isConnected) submitted(slug);
   });
 }
 function login(current) {
