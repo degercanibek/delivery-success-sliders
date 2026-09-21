@@ -6,7 +6,7 @@ Small bilingual workshop application: vanilla HTML/CSS/JavaScript, Supabase and 
 
 For an existing project with migration 003 applied, run the entire `migrations/004_edit_own_vote.sql` in Supabase SQL Editor as the database owner **before deploying this frontend**. Then reload the application. It is transactional and safe to rerun; it preserves existing responses, the unique session/device index, RLS and the admin allowlist. Fresh installs use the updated `supabase.sql`.
 
-Results legends show each group's response count, including zero. Hidden identities retain their existing Group A/B aliases. Counts refresh with the chart, respect Freeze Results, and are admin-only. Changing a vote's group transfers its count and recalculates averages without increasing the total.
+Prominent cards above the results chart show each group's response count, including zero. Bar labels remain average allocation scores; group counts stay readable while the chart is blurred. Hidden identities retain their existing Group A/B aliases. Counts refresh with the chart, respect Freeze Results, and are admin-only. Changing a vote's group transfers its count and recalculates averages without increasing the total.
 
 Returning participants in the same browser/origin see their previous group and allocations prefilled, with **Update my vote**. The confirmation also offers **Edit my vote**. Editing is allowed only while voting is open. `submit_vote` still rejects duplicates; a separate `update_vote` RPC updates the existing row using the same server validator and session lock. It cannot create a response. After an admin reset, reload to submit a new vote.
 

@@ -349,3 +349,24 @@ test('returning participant edits prefilled own vote without results or administ
   assert.match(h.document.querySelector('#send').textContent, /Güncelle/);
   h.dom.window.close();
 });
+
+
+test('prominent group cards follow live updates, identity reveal and freeze', async () => {
+  const options = { signedIn: true, isAdmin: true, aggregate: { response_count: 2, groups: [{ group_id: 'group-one', response_count: 2 }], averages: [] } };
+  const h = harness('#results?s=test', options);
+  await waitFor(() => h.document.querySelector('.group-participation-card'));
+  const cards = () => h.document.querySelector('#group-participation');
+  assert.match(cards().textContent, /Grup A/);
+  assert.equal(cards().querySelector('strong').textContent, '2');
+  h.document.querySelector('[data-reveal=groups]').click();
+  assert.equal(cards().querySelector('span').textContent, 'Grup');
+  h.document.querySelector('#freeze').click();
+  options.aggregate = { response_count: 3, groups: [{ group_id: 'group-one', response_count: 3 }], averages: [] };
+  await h.tick();
+  assert.equal(cards().querySelector('strong').textContent, '2');
+  h.document.querySelector('#freeze').click();
+  await waitFor(() => cards().querySelector('strong').textContent === '3');
+  h.document.querySelector('[data-reveal=groups]').click();
+  assert.equal(cards().querySelector('span').textContent, 'Grup A');
+  h.dom.window.close();
+});
