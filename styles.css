@@ -143,3 +143,9 @@ a.btn{text-decoration:none;display:inline-block}button:disabled{opacity:.45;curs
 .participant-shell input,.participant-shell .slider,.participant-shell .choice span{min-width:0}
 .participant-shell .card,.participant-shell .choice{overflow-wrap:anywhere}
 @media(max-width:600px){.participant-shell{padding:8px 12px}.participant-shell .card{padding:16px}.participant-shell .allocation-card .slider{padding:13px 0;gap:8px 12px}.participant-shell .group-choices .choice{padding:11px 12px}.participant-shell .vote-intro>p{font-size:14px}.participant-shell .vote-dock{padding:12px}}
+
+/* Keep the live vote count readable independently of chart blur/reveal. */
+.chart-stage{display:grid;grid-template-rows:minmax(0,1fr) auto}
+.chart-scroll{min-height:0}
+.chart-vote-count{position:relative;z-index:1;padding:10px 20px;text-align:right;border-top:1px solid #7184b722;color:#c4cde6;background:#0b1323;font-size:14px;font-weight:600}
+.presenting-root .chart-vote-count{font-size:clamp(14px,1.8vmin,36px);padding:clamp(8px,1vmin,20px) clamp(16px,2vmin,40px)}

@@ -148,6 +148,7 @@ test('results reveal independently, freeze display, update automatically and cle
   const h = harness('?s=test#results', options);
   await waitFor(() => h.document.querySelector('#freeze'));
   assert.equal(h.document.querySelector('#count').textContent, '1');
+  assert.equal(h.document.querySelector('#chart-vote-count').textContent, '1 kişi oy kullandı');
   assert.equal(h.document.querySelector('#blur').max, '100');
   h.document.querySelector('[data-reveal=groups]').click();
   let last = h.chartOptions.at(-1);
@@ -165,12 +166,15 @@ test('results reveal independently, freeze display, update automatically and cle
   await h.tick();
   assert.equal(h.chartOptions.length, before);
   assert.equal(h.document.querySelector('#count').textContent, '1');
+  assert.equal(h.document.querySelector('#chart-vote-count').textContent, '1 kişi oy kullandı');
   h.document.querySelector('#freeze').click();
   await waitFor(() => h.document.querySelector('#count').textContent === '2');
+  assert.equal(h.document.querySelector('#chart-vote-count').textContent, '2 kişi oy kullandı');
   assert.equal(h.document.querySelector('#chart').style.filter, 'blur(8px)');
   options.aggregate = { response_count: 3, groups: [], averages: [] };
   await h.tick();
   assert.equal(h.document.querySelector('#count').textContent, '3');
+  assert.equal(h.document.querySelector('#chart-vote-count').textContent, '3 kişi oy kullandı');
   h.document.querySelector('#fully-reveal').click();
   assert.equal(h.chartOptions.at(-1).yAxis.show, true);
   assert.equal(h.document.querySelector('#blur').value, '0');
