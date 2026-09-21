@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import * as allocation from '../allocation.mjs';
 import * as presentation from '../presentation.mjs';
 import * as exportsModule from '../exports.mjs';
+import { parseArchive } from '../imports.mjs';
 const require = createRequire(`${process.env.DSS_TEST_TOOLS || '/tmp/dss-review-tools'}/package.json`);
 const { JSDOM } = require('jsdom');
 const source = (await readFile(new URL('../app.js', import.meta.url), 'utf8')).replace(/^import .*;\n/gm, '');
@@ -20,7 +21,7 @@ function harness(hash, options = {}) {
   const { window } = dom;
   const ticks = new Map(); let tickId = 0;
   const downloads = [];
-  Object.assign(window, allocation, presentation, exportsModule, {
+  Object.assign(window, allocation, presentation, exportsModule, { parseArchive,
     liveFeed: settings => presentation.liveFeed({ ...settings, schedule: callback => { ticks.set(++tickId, callback); return tickId; }, cancel: id => ticks.delete(id) }),
     downloadFile: (...args) => downloads.push(args)
   });
@@ -440,5 +441,43 @@ test('group counts require explicit opt-in even after blur is removed and Fully 
   h.document.querySelector('#fully-reveal').click(); hidden();
   button.click();
   h.document.querySelector('#reset-reveal').click(); hidden();
+  h.dom.window.close();
+});
+
+
+test('admin edits prefilled bilingual content without changing identifiers', async () => {
+  const h = harness('#manage?s=test', { signedIn: true, isAdmin: true });
+  await waitFor(() => h.document.querySelector('#session-edit'));
+  const form = h.document.querySelector('#session-edit');
+  assert.equal(form.querySelector('[name=title_tr]').value, 'Deneme');
+  form.querySelector('[name=title_tr]').value = 'Yeni Başlık';
+  form.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  await waitFor(() => h.calls.some(c => c.fn === 'edit_session_content'));
+  const call = h.calls.find(c => c.fn === 'edit_session_content');
+  assert.equal(call.params.p_session_id, session.id);
+  assert.equal(call.params.p_payload.title_tr, 'Yeni Başlık');
+  assert.equal(call.params.p_payload.slug, 'test');
+  h.dom.window.close();
+});
+
+test('JSON import requires preview, shows safe summary and sends chosen import mode', async () => {
+  const h = harness('#admin', { signedIn: true, isAdmin: true });
+  await waitFor(() => h.document.querySelector('#import-form'));
+  const form = h.document.querySelector('#import-form');
+  form.querySelector('[name=slug]').value = 'archive-copy';
+  form.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  await waitFor(() => !h.document.querySelector('[data-error]').hidden);
+  assert.equal(h.calls.some(c => c.fn === 'import_session'), false);
+  const input = h.document.querySelector('#import-json');
+  input.value = JSON.stringify({ schema_version: 1, session: { ...session, title_tr: '<img src=x>' }, groups, dimensions, responses: [] });
+  h.document.querySelector('#import-preview').click();
+  await waitFor(() => h.document.querySelector('#import-summary').textContent.includes('3 boyut'));
+  assert.equal(h.document.querySelector('#import-summary img'), null);
+  form.querySelector('[name=include_responses]').checked = false;
+  form.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  await waitFor(() => h.calls.some(c => c.fn === 'import_session'));
+  const call = h.calls.find(c => c.fn === 'import_session');
+  assert.equal(call.params.p_slug, 'archive-copy');
+  assert.equal(call.params.p_include_responses, false);
   h.dom.window.close();
 });

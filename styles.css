@@ -163,3 +163,7 @@ a.btn{text-decoration:none;display:inline-block}button:disabled{opacity:.45;curs
 
 .group-participation{transition:filter .55s ease,opacity .55s ease}
 @media(prefers-reduced-motion:reduce){.group-participation{transition:none}}
+
+.admin-list .item{flex-wrap:wrap}
+.admin-list .item>details[open]{flex-basis:100%;order:3;min-width:0}
+.admin-list [data-edit]{padding-top:12px}
