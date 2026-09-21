@@ -19,13 +19,15 @@ test('remaining action refuses impossible totals and accepts zero', () => {
   assert.equal(v.c, 0);
 });
 test('bounds, invalid input, minimum dimensions and exact totals', () => {
-  for (const count of [1, 2, 3, 7, 101]) {
+  for (const count of [1, 2, 3, 4, 7, 101]) {
     const ids = Array.from({ length: count }, (_, i) => `d${i}`);
     const v = initialAllocation(ids);
-    assert.equal(validAllocation(v, ids), count >= 2);
+    assert.deepEqual(Object.values(v), Array(count).fill(0));
+    assert.equal(validAllocation(v, ids), false);
     const others = ids.slice(1).map(id => v[id]);
     setAllocation(v, ids[0], 1000);
     assert.equal(v[ids[0]], 100);
+    assert.equal(validAllocation(v, ids), count >= 2);
     assert.deepEqual(ids.slice(1).map(id => v[id]), others);
     setAllocation(v, ids[0], NaN);
     assert.equal(v[ids[0]], 100);

@@ -93,17 +93,17 @@ test('drag keeps the same DOM, synchronizes totals, and blocks double submit', a
     range.value = value;
     range.dispatchEvent(new h.window.Event('input', { bubbles: true }));
     assert.equal(h.document.querySelector('[data-range]'), range);
-    assert.equal(h.document.querySelectorAll('[data-number]')[1].value, '33');
-    assert.equal(h.document.querySelectorAll('[data-number]')[2].value, '33');
-    assert.equal(h.document.querySelector('#send').disabled, value !== 34);
+    assert.equal(h.document.querySelectorAll('[data-number]')[1].value, '0');
+    assert.equal(h.document.querySelectorAll('[data-number]')[2].value, '0');
+    assert.equal(h.document.querySelector('#send').disabled, value !== 100);
     assert.equal(h.document.querySelector('[data-number]').value, range.value);
   }
   const number = h.document.querySelector('[data-number]');
   number.value = '60'; number.dispatchEvent(new h.window.Event('input'));
   assert.equal(range.value, '60');
-  assert.equal(h.document.querySelector('.total').classList.contains('over-budget'), true);
+  assert.equal(h.document.querySelector('.total').classList.contains('over-budget'), false);
   h.document.querySelector('[data-balance=dimension-1]').click();
-  assert.equal(h.document.querySelectorAll('[data-number]')[1].value, '7');
+  assert.equal(h.document.querySelectorAll('[data-number]')[1].value, '40');
   assert.equal(range.value, '60');
   assert.equal(h.document.querySelector('#total').textContent, '100');
   h.document.querySelector('[name=group]').checked = true;
@@ -121,6 +121,7 @@ test('failed submission retains values and enables retry with the same device to
   const h = harness('#vote?s=test', { submit: async () => ({ error: { message: 'DSS_DUPLICATE' } }) });
   await waitFor(() => h.document.querySelector('#send'));
   h.document.querySelector('[name=group]').checked = true;
+  h.document.querySelector('[data-balance=dimension-0]').click();
   h.document.querySelector('#send').click();
   await waitFor(() => !h.document.querySelector('[data-error]').hidden);
   assert.match(h.document.querySelector('[data-error]').textContent, /zaten oy/);
@@ -279,8 +280,12 @@ test('participant loading, voting, confirmation and language switch never contai
   isolated();
   assert.deepEqual(h.tableReads, []);
   assert.deepEqual(h.calls.map(call => call.fn), ['voting_session', 'my_vote']);
-  assert.ok(h.document.querySelector('.budget-complete'));
+  assert.equal(h.document.querySelector('.budget-complete'), null);
+  assert.equal(h.document.querySelector('#total').textContent, '0');
+  assert.equal(h.document.querySelector('#send').disabled, true);
+  for (const input of h.document.querySelectorAll('[data-range], [data-number]')) assert.equal(input.value, '0');
   h.document.querySelector('[name=group]').checked = true;
+  h.document.querySelector('[data-balance=dimension-0]').click();
   h.document.querySelector('#send').click();
   await waitFor(() => h.document.querySelector('.submitted-mark'));
   isolated();

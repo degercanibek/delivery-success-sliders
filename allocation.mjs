@@ -1,8 +1,6 @@
 // Independent integer allocations. Only valid totals may be submitted.
 export function initialAllocation(ids) {
-  if (!ids.length) return {};
-  const base = Math.floor(100 / ids.length);
-  return Object.fromEntries(ids.map((id, i) => [id, base + (i < 100 % ids.length ? 1 : 0)]));
+  return Object.fromEntries(ids.map(id => [id, 0]));
 }
 export function setAllocation(values, key, requested) {
   if (key in values && Number.isFinite(requested)) values[key] = Math.max(0, Math.min(100, Math.round(requested)));
