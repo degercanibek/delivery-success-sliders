@@ -158,3 +158,6 @@ a.btn{text-decoration:none;display:inline-block}button:disabled{opacity:.45;curs
 .presenting-root .group-participation{grid-template-columns:repeat(auto-fit,minmax(clamp(110px,15vmin,300px),1fr));gap:clamp(8px,1.2vmin,24px);padding:clamp(10px,1.5vmin,28px)}
 .presenting-root .group-participation-card strong{font-size:clamp(26px,4vmin,72px)}
 .presenting-root .group-participation-card>span,.presenting-root .group-participation-card small{font-size:clamp(12px,1.6vmin,28px)}
+
+.group-participation{transition:filter .55s ease,opacity .55s ease}
+@media(prefers-reduced-motion:reduce){.group-participation{transition:none}}

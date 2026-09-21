@@ -280,10 +280,14 @@ async function results(slug, current) {
   const ownChart = chart;
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   const applyBlur = () => {
-    chartElement.style.filter = `blur(${blur * 0.32}px)`;
-    chartElement.style.opacity = String(1 - blur / 100);
-    chartElement.style.pointerEvents = blur > 0 ? 'none' : '';
-    chartElement.setAttribute('aria-hidden', String(blur > 0));
+    // Group sizes can identify disciplines even when their names are hidden.
+    // Keep aggregate totals outside this presentation mask.
+    for (const element of [chartElement, root.querySelector('#group-participation')]) {
+      element.style.filter = `blur(${blur * 0.32}px)`;
+      element.style.opacity = String(1 - blur / 100);
+      element.style.pointerEvents = blur > 0 ? 'none' : '';
+      element.setAttribute('aria-hidden', String(blur > 0));
+    }
     root.querySelector('#veil-label').hidden = blur < 100;
     root.querySelector('#blur-value').textContent = blur;
     root.querySelector('#blur').value = blur;
