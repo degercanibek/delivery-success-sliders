@@ -354,6 +354,8 @@ test('returning participant edits prefilled own vote without results or administ
 test('prominent group cards follow live updates, identity reveal and freeze', async () => {
   const options = { signedIn: true, isAdmin: true, aggregate: { response_count: 2, groups: [{ group_id: 'group-one', response_count: 2 }], averages: [] } };
   const h = harness('#results?s=test', options);
+  await waitFor(() => h.document.querySelector('[data-reveal=counts]'));
+  h.document.querySelector('[data-reveal=counts]').click();
   await waitFor(() => h.document.querySelector('.group-participation-card'));
   const cards = () => h.document.querySelector('#group-participation');
   assert.match(cards().textContent, /Grup A/);
@@ -376,6 +378,7 @@ test('group counts follow blur and reveal while overall totals remain visible an
   const options = { signedIn: true, isAdmin: true, aggregate: { response_count: 4, groups: [{ group_id: 'group-one', response_count: 4 }], averages: [] } };
   const h = harness('#results?s=test', options);
   await waitFor(() => h.document.querySelector('#group-participation'));
+  h.document.querySelector('[data-reveal=counts]').click();
   const cards = h.document.querySelector('#group-participation');
   const chart = h.document.querySelector('#chart');
   const total = h.document.querySelector('#count');
@@ -406,5 +409,36 @@ test('group counts follow blur and reveal while overall totals remain visible an
   h.document.querySelector('#fully-blur').click(); check(100);
   h.document.querySelector('#fully-reveal').click(); check(0);
   h.document.querySelector('#reset-reveal').click(); check(100);
+  h.dom.window.close();
+});
+
+
+test('group counts require explicit opt-in even after blur is removed and Fully Reveal is used', async () => {
+  const options = { signedIn: true, isAdmin: true, aggregate: { response_count: 4, groups: [{ group_id: 'group-one', response_count: 4 }], averages: [] } };
+  const h = harness('#results?s=test', options);
+  await waitFor(() => h.document.querySelector('[data-reveal=counts]'));
+  const cards = h.document.querySelector('#group-participation');
+  const button = h.document.querySelector('[data-reveal=counts]');
+  const hidden = () => {
+    assert.equal(cards.hidden, true);
+    assert.equal(cards.innerHTML, '');
+    assert.equal(button.getAttribute('aria-pressed'), 'false');
+  };
+  hidden();
+  const blur = h.document.querySelector('#blur');
+  blur.value = '0'; blur.dispatchEvent(new h.window.Event('input'));
+  hidden();
+  h.document.querySelector('#fully-reveal').click(); hidden();
+  options.aggregate = { response_count: 5, groups: [{ group_id: 'group-one', response_count: 5 }], averages: [] };
+  await h.tick(); hidden();
+  assert.equal(h.document.querySelector('#count').textContent, '5');
+  button.click();
+  assert.equal(cards.hidden, false);
+  assert.equal(cards.querySelector('strong').textContent, '5');
+  assert.equal(button.getAttribute('aria-pressed'), 'true');
+  button.click(); hidden();
+  h.document.querySelector('#fully-reveal').click(); hidden();
+  button.click();
+  h.document.querySelector('#reset-reveal').click(); hidden();
   h.dom.window.close();
 });
