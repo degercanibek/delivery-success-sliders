@@ -370,3 +370,41 @@ test('prominent group cards follow live updates, identity reveal and freeze', as
   assert.equal(cards().querySelector('span').textContent, 'Grup A');
   h.dom.window.close();
 });
+
+
+test('group counts follow blur and reveal while overall totals remain visible and live', async () => {
+  const options = { signedIn: true, isAdmin: true, aggregate: { response_count: 4, groups: [{ group_id: 'group-one', response_count: 4 }], averages: [] } };
+  const h = harness('#results?s=test', options);
+  await waitFor(() => h.document.querySelector('#group-participation'));
+  const cards = h.document.querySelector('#group-participation');
+  const chart = h.document.querySelector('#chart');
+  const total = h.document.querySelector('#count');
+  const check = (amount) => {
+    for (const element of [cards, chart]) {
+      assert.equal(element.style.filter, `blur(${amount * 0.32}px)`);
+      assert.equal(element.style.opacity, String(1 - amount / 100));
+      assert.equal(element.getAttribute('aria-hidden'), String(amount > 0));
+    }
+    for (let element = total; element; element = element.parentElement) {
+      assert.equal(element.style.filter, '');
+      assert.notEqual(element.style.opacity, '0');
+      assert.notEqual(element.getAttribute('aria-hidden'), 'true');
+    }
+  };
+  check(100);
+  h.document.querySelector('[data-reveal=groups]').click();
+  check(100);
+  options.aggregate = { response_count: 5, groups: [{ group_id: 'group-one', response_count: 5 }], averages: [] };
+  await h.tick();
+  assert.equal(total.textContent, '5');
+  assert.equal(cards.querySelector('strong').textContent, '5');
+  check(100);
+  const slider = h.document.querySelector('#blur');
+  slider.value = '50'; slider.dispatchEvent(new h.window.Event('input'));
+  check(50);
+  h.document.querySelector('#fully-reveal').click(); check(0);
+  h.document.querySelector('#fully-blur').click(); check(100);
+  h.document.querySelector('#fully-reveal').click(); check(0);
+  h.document.querySelector('#reset-reveal').click(); check(100);
+  h.dom.window.close();
+});
